@@ -50,7 +50,8 @@ Lege den ROM als `orig/baserom.nds` ab (wird von Git ignoriert).
 
 - [x] Befehls-Statistik: Welche ARM-/Thumb-Befehle, indirekte Sprünge, Sprungtabellen? → [`docs/recomp.md`](docs/recomp.md)
 - [x] Recompiler-Prototyp: ARM → C, Funktion für Funktion (Grenzen aus dsd), 99,1 % der Funktionen vollständig
-- [ ] Erzeugten Code mit einem C-Compiler bauen und testen (Test-Harness)
+- [x] Erzeugten Code mit einem C-Compiler bauen und testen: alles kompiliert und linkt,
+      `Pad_Update` besteht 100 000 Zufallstests (w64devkit/GCC in `tools\`)
 - [ ] Rest-TODOs: rohe Offsets, Sprünge in fremde Funktionen, Sprungtabellen ohne `cmp`
 - [ ] Overlays: Funktionen pro Overlay, Laden/Entladen zur Laufzeit
 - [ ] Hauptprogramm kompiliert und läuft bis zur ersten Hardware-Abfrage
@@ -64,6 +65,13 @@ Lege den ROM als `orig/baserom.nds` ab (wird von Git ignoriert).
 - [ ] 3D-GPU
 - [ ] Sound
 - [ ] **Erster spielbarer Stand**
+
+### Launcher
+
+Das Spiel startet später über einen Launcher (Teil derselben `.exe`):
+- Beim ersten Start die eigene `.nds` auswählen, SHA-1 prüfen (nur `CLJP` Rev 0),
+  Grafiken/Sounds/Texte lokal extrahieren. Es werden keine Spieldaten mitgeliefert.
+- Danach: Start per Klick, Einstellungen für Tastenbelegung, Fenstergröße, Bildschirm-Layout.
 
 ### Phase 4: PC-Extras
 

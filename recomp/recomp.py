@@ -279,6 +279,8 @@ class Translator:
             raise Unsupported(f"Adressierung {mem}")
         inner, wb, post = m.groups()
         parts = split_ops(inner)
+        if REGS.get(parts[0].strip()) == 15 and (wb or post):
+            raise Unsupported("Writeback auf pc")
         base = self.reg(parts[0], insn)
         off = "0"
         def offset(p):
@@ -635,6 +637,8 @@ def main():
     syms = load_symbols(root / "config" / "eur" / "arm9")
     funcs = read_functions(root / "build" / "asm")
     out = root / "build" / "recomp"
+    if "--out" in sys.argv:
+        out = Path(sys.argv[sys.argv.index("--out") + 1])
     out.mkdir(parents=True, exist_ok=True)
 
     per_mod = defaultdict(list)

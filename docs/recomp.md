@@ -81,6 +81,30 @@ Noch nicht übersetzt (werden als `RC_TODO("…")` markiert):
 | 6 | `<illegal>` (Daten, die als Code markiert sind) |
 | 3 | Literal-Pool *vor* der Funktion (`0x0203ece0`, siehe dsd-Warnung) |
 
+### Bauen und Testen
+
+C-Compiler: w64devkit (GCC 16.2) in `tools\w64devkit\`.
+
+```
+python -I recomp\recomp.py .
+python -I recomp\gen_ninja.py . -O1
+tools\ninja.exe -C build\recomp          # alle 136 Dateien, ~45 s auf 12 Kernen
+recomp\test\run_tests.bat                # Einzeltests
+```
+
+**Stand:**
+- Der gesamte erzeugte Code kompiliert fehlerfrei (136 Dateien).
+- Alles zusammen linkt ohne offene Symbole zu einem Programm (11,5 MB, 12 220 Funktionen
+  in der Funktionstabelle).
+- `test_pad_update`: Die übersetzte `Pad_Update` wird mit 100 000 zufälligen Tastenfolgen
+  gegen eine Referenz nach dem Ghidra-Pseudocode geprüft → **0 Fehler**.
+  Die Masken-Tabelle `0x0204ac4c` enthält die Reihenfolge
+  hoch/runter, rechts/links, A, B, X, Y, Start, Select, L, R.
+
+Der Test-Harness (`recomp/test/harness.c`) bildet nur ITCM, Haupt-RAM und DTCM als flachen
+Speicher nach. Alle Hooks (indirekte Aufrufe, BIOS, Systemregister) zählen nur mit. Das ist
+die Keimzelle der späteren Plattform-Schicht.
+
 **Bekannte Vereinfachungen im Prototyp:**
 - Carry bei Immediate-Operanden mit Rotation (`movs r0, #0x…`) bleibt unverändert.
 - Ein Rücksprung (`ldm sp!, {…, pc}`, `bx lr`) wird immer als C-`return` behandelt.
