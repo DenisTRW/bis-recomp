@@ -15,10 +15,10 @@
     }
   ],
   "prepare": {
-    "program": "tools/dsd.exe",
-    "args": ["rom", "extract", "--rom", "{install}/orig/baserom.nds", "--output-path", "{install}/extract/eur"],
-    "label": "Extracting game data",
-    "timeout": 600
+    "program": "tools/python/python.exe",
+    "args": ["-I", "{install}/recomp/setup_game.py", "--rom", "{install}/orig/baserom.nds", "--root", "{install}"],
+    "label": "Building the game from your ROM",
+    "timeout": 3600
   },
   "start": {
     "program": ["build/pc/bis_pc.exe", "bis_pc.exe"],
