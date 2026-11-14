@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.png" alt="Mario & Luigi BIS Recomp" width="460">
+</p>
+
 # bis-recomp
 
 > [!IMPORTANT]
