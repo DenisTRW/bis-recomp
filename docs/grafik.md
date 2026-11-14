@@ -155,6 +155,15 @@ reproduzierbar.
     Fade gestartet wird; Fall 2/4 nur, wenn Bit 19 gesetzt ist, Fall 1 nur, wenn ein Bit in
     `data_020564e0+8` nicht gesetzt ist, Fall 3 nie. **Nächster Schritt:** diesen Wert und die
     Bits beim Aufruf von `0208c700` ausgeben und klären, wer sie setzt.
+  - **Spur zum fehlenden Einblenden:** `0208c700` läuft für den oberen Bildschirm in Frame
+    2253, für den unteren erst in Frame 2267. Das Statuswort `[0x0212778c+0x68]` ist dabei 0,
+    also Fall 0: Ein Bildschirm startet den Fade des **anderen** nur, wenn dieser schon im
+    Zustand ≥ 3 ist (`vtable+0x54`), sonst wird nur ein „ausstehend“-Bit gesetzt
+    (`.L_0208cf9c`). Oben findet unten noch nicht bereit vor, unten findet oben im Zustand 2
+    – beide setzen nur das Bit, danach stellt `0208d0cc` beide auf Zustand 3
+    (`func_ov004_02091bbc`, wartet auf Fade) → Stillstand. Vermutung: Reihenfolge/Abstand
+    der beiden Einrichtungen hängt an unserem Lade-Timing (Karte). Prüfen: wer wertet das
+    „ausstehend“-Bit aus, und ob mit anderem `BIS_CARD_DELAY` beide im selben Frame laufen.
   - Neue Hilfen: `BIS_PROFILE_FROM=frame` (Zähler „Häufigste“ ab diesem Frame), der Bericht
     zeigt die zuletzt außerhalb von Interrupts betretene Funktion und deren letzte Lesezugriffe
     (findet Warteschleifen ohne Funktionsaufrufe).
