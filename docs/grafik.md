@@ -233,6 +233,15 @@ und Vorgeschichte bzw. Schreibzugriffe mit Frame, `lr`, `sp` und Vorgeschichte. 
 
 Funktionsverfolgung mit mehreren Adressen: `boot_test.exe … 0 "0201c9ac,0203dd70"`.
 
+## Offen: Hintergrund des Titelmenüs (unterer Bildschirm)
+
+Vergleich mit DeSmuME: Im Original zeigt der untere Bildschirm im Titelmenü einen lila Himmel
+mit Wolken und gespiegeltem Schloss, bei uns ist er weiß. Unten liegt Engine A (POWCNT1
+Bit 15 = 0) mit BG0 = 3D und BG3. Die 3D-Szene kommt an (27 Polygone, texturiert), wird aber
+nicht sichtbar: Die Polygone sind entartet, alle gezeigten Ecken haben x = 0 bzw. x = 256
+(`BIS_3D=1`, Liste 0-7), der letzte Roh-Vertex ist `0 3072 0`. Vermutung: Fehler bei den
+X-Koordinaten in einem Vertex-Befehl oder in der Matrix dieser Szene. Außerdem wirkt der
+Schriftzug „©2009 Nintendo“ rot-weiß zerfasert (Blending/Palette prüfen).
 ## VRAM-Bänke – `recomp/runtime/vram.c`
 
 9 Bänke (A–I) mit eigenem Speicher. Die Zuordnung folgt `VRAMCNT` (`0x04000240–0x04000249`,
