@@ -25,12 +25,11 @@ verfolgten Dateien, `tools/dsd.exe`, `tools/ninja.exe`, `tools/w64devkit`, SDL3 
 und `tools/python`. Das Skript bricht ab, wenn etwas nach Spieldaten oder erzeugtem Spielcode
 aussieht.
 
-## Was noch fehlt
+## Stand
 
-- **Python (embeddable) in `tools/python`**: muss einmal heruntergeladen werden
-  (python.org, „Windows embeddable package (64-bit)“). Erst danach kann das Paket gebaut werden.
-- Lizenztexte liegen bei: w64devkit (`COPYING.MinGW-w64-runtime.txt`, README), SDL3
-  (`LICENSE.txt`); für dsd (MIT), Ninja (Apache 2.0) und Python fehlen die Texte noch im Paket.
+- Python 3.12.10 (embeddable, python.org) liegt in `tools/python` (nicht im Repo, nur im Paket).
+- Lizenztexte in `licenses/`; Übersicht in `THIRD_PARTY_NOTICES.md`.
+- Einrichtung mit dem mitgelieferten Python getestet: rund 2 Minuten von Grund auf.
 - Auf GitHub zuerst als **Pre-Release** veröffentlichen.
 - Eintrag beim RecompLauncher: Entwickler-Konto unter https://recomplauncher.com/dev, dann
   einreichen (Schritt des Projektinhabers).

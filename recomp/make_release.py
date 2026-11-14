@@ -18,8 +18,10 @@ import argparse, re, subprocess, sys, zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-FORBIDDEN = re.compile(r"(\.nds|\.srl|\.sav|\.dsv)$|^(extract|build|orig|assets|ghidra|screenshots)/|"
-                       r"(^|/)(asm|recomp)/.*\.(s|c)$", re.IGNORECASE)
+# ROMs and saves anywhere; generated output (build/), extracted data and local folders; anything
+# in orig/ except the empty placeholder where the launcher later puts the player's ROM
+FORBIDDEN = re.compile(r"(\.nds|\.srl|\.sav|\.dsv)$|^(extract|build|assets|ghidra|screenshots|saves)/|"
+                       r"^orig/(?!\.gitkeep$)", re.IGNORECASE)
 # generated recompiler output never lives in the repo, but double-check its file names
 GENERATED = re.compile(r"(^|/)(main|itcm|dtcm|ov\d{3})\.c$", re.IGNORECASE)
 
@@ -54,8 +56,10 @@ def main():
     files = [(ROOT / f, f) for f in git_files()]
     files += [(f, f.relative_to(ROOT).as_posix()) for f in tool_files(ROOT)]
 
+    rom_like = re.compile(r"\.(nds|srl|sav|dsv)$", re.IGNORECASE)
     bad = [arc for _, arc in files
-           if FORBIDDEN.search(arc) and not arc.startswith("tools/") or GENERATED.search(arc)]
+           if rom_like.search(arc)                                   # anywhere, tools included
+           or (not arc.startswith("tools/") and (FORBIDDEN.search(arc) or GENERATED.search(arc)))]
     if bad:
         sys.exit("refusing to package files that look like game data or game code:\n  " + "\n  ".join(bad[:20]))
 

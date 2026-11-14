@@ -16,4 +16,4 @@ The complete source code of the GCC and binutils versions contained in w64devkit
 from the w64devkit release that the package was made from (see the link above); the version is
 named in `tools/w64devkit/README.md` inside the package.
 
-The license texts are included in the package next to each program.
+The license texts are in the `licenses/` folder (dsd, Ninja, Python, SDL 3, Mingw-w64 runtime); w64devkit also keeps its own files in `tools/w64devkit`.
