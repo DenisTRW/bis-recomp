@@ -14,6 +14,7 @@
  * Jede Antwort ist im HLE-Bericht als SIMULIERT oder FEHLT gekennzeichnet.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "platform.h"
 #include "arm7_hle.h"
@@ -238,6 +239,31 @@ static void snd_command(uint32_t data) {
         return;
     }
     uint32_t sw = rd32(SND_SHARED_WORK_PTR);
+    if (getenv("BIS_SNDLOG")) {
+        /* Fehlersuche: Befehlsliste ausgeben. SDK-Layout: next, id, arg[4] (0x18 Bytes) */
+        static int shown;
+        int n = 0;
+        for (uint32_t c = data; c && n < 64 && shown < 3000; c = rd32(c), n++) {
+            uint32_t id = rd32(c + 4);
+            if (id == 20 || id == 21 || id == 33) continue;   /* Lautstärke/Pan/Treiberinfo: ständig */
+            shown++;
+            fprintf(stderr, "  [snd] Befehl %2u  %08x %08x %08x %08x\n", id, rd32(c + 8), rd32(c + 12), rd32(c + 16), rd32(c + 20));
+        }
+    }
+    if (sw && getenv("BIS_SND_STATUS")) {
+        /* EXPERIMENT: Spielerstatus pflegen (SNDSharedWork.playerStatus, +4).
+         * Befehle: 0 START_SEQ, 1 STOP_SEQ, 2 PREPARE_SEQ, 3 START_PREPARED_SEQ; arg0 = Spieler */
+        int n = 0;
+        for (uint32_t c = data; c && n < 256; c = rd32(c), n++) {
+            uint32_t id = rd32(c + 4), p = rd32(c + 8) & 15;
+            uint32_t st = rd32(sw + 4);
+            if (id == 0 || id == 2 || id == 3) st |= 1u << p;
+            else if (id == 1) st &= ~(1u << p);
+            else continue;
+            wr32(sw + 4, st);
+            HLE(SIMULIERT, "ARM7 Sound: Spielerstatus aus Start/Stopp-Befehlen (ohne Wiedergabe)");
+        }
+    }
     if (sw) {
         wr32(sw, rd32(sw) + 1);
         HLE(SIMULIERT, "ARM7 Sound: Befehlsliste als erledigt gemeldet (kein Ton)");

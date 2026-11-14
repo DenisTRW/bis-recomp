@@ -761,8 +761,9 @@ static void dump_frame(const char *tag) {
     Gfx2D g = { io, pal, oam, gpu3d_frame() };
     unsigned missing = 0;
     int a_on_top = (io16(0x304) >> 15) & 1;
-    render2d_engine(&g, a_on_top ? 0 : 1, top, 1, &missing);
-    render2d_engine(&g, a_on_top ? 1 : 0, bottom, 1, &missing);
+    int bright = getenv("BIS_NOBRIGHT") ? 0 : 1;   /* Fehlersuche: Master-Helligkeit ignorieren */
+    render2d_engine(&g, a_on_top ? 0 : 1, top, bright, &missing);
+    render2d_engine(&g, a_on_top ? 1 : 0, bottom, bright, &missing);
     memcpy(both, top, sizeof top);
     memcpy(both + 256 * 192, bottom, sizeof bottom);
     char path[1200];

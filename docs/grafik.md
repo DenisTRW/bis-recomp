@@ -134,6 +134,16 @@ reproduzierbar.
     - Offen: was die Szene zum Einblenden braucht. Nächste Kandidaten: Zustandsmaschine der
       Szene (`[data_?+0x68]` Bits 0/1 in `func_ov004_020cead8`), der 4-Frame-Takt, und ob
       ein Skript auf ein Sound-Ende wartet, das nie „läuft“.
+  - **Die Szene ist da:** Mit `BIS_NOBRIGHT=1` (Master-Helligkeit beim Zeichnen ignorieren)
+    zeigt Frame 2700 die erste Spielszene (Toad Town, Pilzhaus, zwei Toads, HUD) auf beiden
+    Bildschirmen. Laden, 2D und 3D funktionieren also; es fehlt nur das Einblenden, und die
+    Szene steht still (Frame 2700 = 3300).
+  - Sound als Ursache geprüft: Nach „Start“ schickt das Spiel PREPARE_SEQ/START_PREPARED_SEQ
+    (Befehle 2/3, sichtbar mit `BIS_SNDLOG=1`). Mit `BIS_SND_STATUS=1` meldet der ARM7-Ersatz
+    gestartete Spieler in `playerStatus` als laufend. Das Bild bleibt trotzdem dunkel, der
+    Spielerstatus allein ist es also nicht. **Nächster Schritt:** herausfinden, worauf das
+    Ereignis-Skript der Szene wartet (Kandidaten: Sequenz-Ende/Tick-Zähler des Sounds,
+    Zeitgeber).
   - Neue Hilfen: `BIS_PROFILE_FROM=frame` (Zähler „Häufigste“ ab diesem Frame), der Bericht
     zeigt die zuletzt außerhalb von Interrupts betretene Funktion und deren letzte Lesezugriffe
     (findet Warteschleifen ohne Funktionsaufrufe).
@@ -153,6 +163,8 @@ und Vorgeschichte bzw. Schreibzugriffe mit Frame, `lr`, `sp` und Vorgeschichte. 
 | `BIS_DUMP_EVERY=n` | Bild alle n Frames (Standard 100) |
 | `BIS_3DPNG=1` | zusätzlich das reine 3D-Bild als `frame_<n>_3d.png` |
 | `BIS_CTXMEM="ac*:40,c00:c"` | bei jedem verfolgten Aufruf Worte ab r0+off ausgeben (`*` = Zeiger folgen) |
+| `BIS_NOBRIGHT=1` | Master-Helligkeit beim Zeichnen ignorieren (zeigt abgedunkelte Szenen) |
+| `BIS_SNDLOG=1` / `BIS_SND_STATUS=1` | Sound-Befehle protokollieren / Experiment: Spielerstatus pflegen |
 | `BIS_CARDLOG=1` | Karten-Befehle, DMA-Steuerung, Karten-DMA |
 | `BIS_CARD_DELAY=n` | experimentell: Karten-DMA erst nach n Speicherzugriffen |
 
