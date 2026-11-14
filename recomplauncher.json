@@ -1,0 +1,79 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Mario & Luigi: Bowser's Inside Story (bis-recomp)",
+  "repo": "DenisTRW/bis-recomp",
+  "inputs": [
+    {
+      "id": "rom",
+      "label": "Mario & Luigi: Bowser's Inside Story - Nintendo DS ROM, Europe (CLJP, Revision 0)",
+      "role": "game",
+      "destination": "orig/baserom.nds",
+      "formats": [
+        { "type": "file", "extensions": ["nds"] }
+      ]
+    }
+  ],
+  "prepare": {
+    "program": "tools/dsd.exe",
+    "args": ["rom", "extract", "--rom", "{install}/orig/baserom.nds", "--output-path", "{install}/extract/eur"],
+    "label": "Extracting game data",
+    "timeout": 600
+  },
+  "start": {
+    "program": ["build/pc/bis_pc.exe", "bis_pc.exe"],
+    "args": ["{install}/extract/eur", "--save", "{install}/saves/bis.sav"]
+  },
+  "settings": [
+    {
+      "id": "scale",
+      "label": "Window size",
+      "help": "Initial size of the game window. It is reduced automatically if it does not fit the screen.",
+      "in": "args",
+      "choices": [
+        { "label": "2x", "args": ["--scale", "2"] },
+        { "label": "1x", "args": ["--scale", "1"] },
+        { "label": "3x", "args": ["--scale", "3"] },
+        { "label": "4x", "args": ["--scale", "4"] }
+      ]
+    },
+    {
+      "id": "fullscreen",
+      "label": "Start in fullscreen",
+      "help": "F11 switches while playing.",
+      "in": "args",
+      "choices": [
+        { "label": "Off", "args": [] },
+        { "label": "On", "args": ["--fullscreen"] }
+      ]
+    },
+    {
+      "id": "filter",
+      "label": "Pixel filter",
+      "help": "Sharp keeps the original pixels, smooth blurs them slightly when scaled.",
+      "in": "args",
+      "choices": [
+        { "label": "Sharp", "args": ["--filter", "sharp"] },
+        { "label": "Smooth", "args": ["--filter", "smooth"] }
+      ]
+    },
+    {
+      "id": "card_timing",
+      "label": "Accurate card timing",
+      "help": "Game data arrives from the cartridge with a delay, like on the console. Turning it off brings back the old behaviour, where a new game stays black.",
+      "in": "args",
+      "advanced": true,
+      "choices": [
+        { "label": "On", "args": ["--card-delay", "2048"] },
+        { "label": "Off", "args": ["--card-delay", "0"] }
+      ]
+    }
+  ],
+  "folders": {
+    "saves": [ { "path": "{install}/saves" } ]
+  },
+  "saves": ["{install}/saves/bis.sav"],
+  "exit_codes": {
+    "2": "The extracted game data was not found. Run the setup again."
+  }
+}

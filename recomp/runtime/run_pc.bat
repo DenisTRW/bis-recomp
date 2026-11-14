@@ -15,4 +15,6 @@ gcc -O2 -w -DRC_TRACE -DPLATFORM_SDL -I "%ROOT%\recomp\include" -I "%ROOT%\build
     "%~dp0card.c" "%~dp0vram.c" "%~dp0render2d.c" "%~dp0gpu3d.c" "%~dp0smc.c" "%~dp0png.c" "%~dp0frontend_sdl.c" ^
     "%ROOT%\build\recomp\obj\*.o" -L "%SDL%\lib" -lSDL3 || exit /b 1
 copy /y "%SDL%\bin\SDL3.dll" "%ROOT%\build\pc\" >nul
+rem RecompLauncher-Beschreibung neben das Programm legen (siehe recomplauncher.json)
+copy /y "%ROOT%\recomplauncher.json" "%ROOT%\build\pc\" >nul
 "%ROOT%\build\pc\bis_pc.exe" "%ROOT%\extract\eur" %*
