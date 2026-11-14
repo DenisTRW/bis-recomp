@@ -1,5 +1,9 @@
 # bis-recomp
 
+> 🤖 **Built with AI:** The large majority of this project (recompiler, runtime, 2D/3D renderers,
+> launcher, tests and documentation) was written by **Claude Code (Claude Opus 5.5)** by Anthropic,
+> working together with and directed by [DenisTRW](https://github.com/DenisTRW).
+
 A native PC port of **Mario & Luigi: Bowser's Inside Story** (Nintendo DS), built through
 **static recompilation**: the game's ARM9 machine code is translated to C, compiled for the PC
 and linked against a platform layer that reimplements the DS hardware (graphics, input, timers,
@@ -132,6 +136,12 @@ ARM7, graphics, recompiler and copy protection.
 - [ ] Sound
 - [ ] Remaining 3D features (shadows, fog, edge marking, anti-aliasing)
 - [ ] First playable version
+
+## License
+
+The code in this repository is licensed under the
+[GNU General Public License v3.0](LICENSE). This covers the project's own code (recompiler,
+runtime, launcher, scripts, documentation) – not the game, which is not part of this repository.
 
 ## Legal
 
