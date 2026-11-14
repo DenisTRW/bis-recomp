@@ -33,7 +33,11 @@ an ihre Adressen) und ruft danach dieselben Funktionen auf wie `Entry`.
 | 5 | Interrupt-Handler kehrt falsch zurück | **Recompiler-Fehler:** `ldr lr, =func_01ff8dd8 / bx r0` wurde als normaler Tail-Call übersetzt | Recompiler erkennt das Muster: erst `r0` aufrufen, dann `func_01ff8dd8` | – |
 | 6 | `func_01ff8dd8` | Thread-Wechsel beim Verlassen des Interrupts (`subs pc, lr, #4`, Moduswechsel) | Thread-Modell mit Fibers → [`threads.md`](threads.md) | ORIGINAL/SIMULIERT |
 | 7 | Leerlauf-Thread „endet“ | rohe Sprung-Offsets (`b #-0x4`) nicht übersetzt | Recompiler wertet sie aus, `OS_Halt` = Frame vergeht | ORIGINAL |
-| 8 | **Aktueller Halt:** Start-Thread wartet | Anfrage an den ARM7 über PXI-Kanal 11 (Karte/Dateisystem), Befehlsblock bei `0x020626e0` | **offen → ARM7-Ersatz für Kartenzugriff** | FEHLT |
+| 8 | Start-Thread wartet | Anfrage an den ARM7 über PXI-Kanal 11 (Karte), Befehlsblock `0x020626e0` | ARM7-Ersatz + Empfangs-FIFO → [`arm7.md`](arm7.md) | SIMULIERT |
+| 9 | Nullzeiger in `FS` | ROM-Archiv ohne Lese-Funktion: ROM-Header fehlte bei `0x027ffe00` | Firmware-Ersatz + Karten-Hardware (B7/B8) | ORIGINAL |
+| 10 | Warteschleife ohne Aufruf | wartet auf Uhr (Kanal 5) | Uhr-Ersatz, Interrupts auch bei Lesezugriffen | SIMULIERT |
+| 11 | `TP_WaitBusy` | Touch-Befehl unbeantwortet (Kanal 6) | Touch-Ersatz („kein Stylus“) | SIMULIERT |
+| 12 | **Aktueller Halt:** Nullzeiger `0x02019eac` | Speicherverwaltung des Spiels nicht eingerichtet | **offen** (Arena-Grenzen?) | – |
 
 Bis Hürde 6 laufen ~140 verschiedene Funktionen, darunter OS-, PXI-, RTC- und
 Interrupt-Initialisierung, Overlay 1 und schon die Tastenabfrage (`Pad_ReadAndUpdate`).

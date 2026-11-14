@@ -22,6 +22,11 @@
 #include "funcs.h"
 #include "platform.h"
 #include "sched.h"
+#include "arm7_hle.h"
+#include "card.h"
+
+static uint32_t irq_pending_extra;   /* von Geräten angeforderte Interrupts (z. B. Karte fertig) */
+#define IRQ_CARD_DONE (1u << 19)
 
 /* ================================================================ HLE-Register
  *
@@ -170,10 +175,44 @@ static void dma_run(int ch) {
     set_io32(base + 8, cnt & ~0x80000000u);
 }
 
-static uint32_t io_read(uint32_t a, int size) {
+/* DMA mit Start "Karte" (ARM9-Timing 5): kopiert vom Datenport, solange die
+ * Karte Daten liefert */
+static void dma_card(void) {
+    for (int ch = 0; ch < 4; ch++) {
+        uint32_t base = 0xb0 + (uint32_t)ch * 12;
+        uint32_t cnt = io32(base + 8);
+        if (!(cnt & 0x80000000u) || ((cnt >> 27) & 7) != 5) continue;
+        uint32_t dst = io32(base + 4);
+        int dctl = (cnt >> 21) & 3;
+        HLE(ORIGINAL, "DMA vom Karten-Datenport");
+        while (card_transfer_active()) {
+            wr32(dst, card_read_data());
+            if (dctl == 0 || dctl == 3) dst += 4; else if (dctl == 1) dst -= 4;
+        }
+        dma_count++;
+        if (!((cnt >> 25) & 1)) set_io32(base + 8, cnt & ~0x80000000u);   /* ohne Repeat: fertig */
+        return;
+    }
+}
+
+static void card_done_check(void) {
+    if (!card_transfer_active() && (io16(0x1a0) & 0x4000)) irq_pending_extra |= IRQ_CARD_DONE;
+}
+
+static uint32_t io_read_inner(uint32_t a, int size) {
     io_count(a, 0);
     if (a >= 0x04100000u) {                         /* IPC-FIFO-Empfang, Karte */
-        HLE(FEHLT, a == 0x04100000u ? "ARM7: IPC-FIFO-Empfang (keine Antworten)" : "Karten-Datenport");
+        if (a == 0x04100000u) {
+            HLE(ORIGINAL, "IPC-FIFO-Empfang: Antwort des ARM7-Ersatzes lesen");
+            return arm7_recv_pop();
+        }
+        if (a == 0x04100010u) {
+            HLE(ORIGINAL, "Karten-Datenport lesen");
+            uint32_t v = card_read_data();
+            card_done_check();
+            return v;
+        }
+        HLE(FEHLT, "Unbekanntes Register ab 0x04100000");
         return 0;
     }
     uint32_t off = a & 0x1fff;
@@ -185,8 +224,9 @@ static uint32_t io_read(uint32_t a, int size) {
         set_io16(off, timer_cnt[(off - 0x100) / 4] += 64);
         HLE(SIMULIERT, "Timer zaehlen pro Lesezugriff statt nach Zeit"); break;
     case 0x130: set_io16(0x130, 0x03ff); HLE(SIMULIERT, "Tasten: keine gedrueckt"); break;
-    case 0x184: set_io16(0x184, (io16(0x184) & 0x8404) | 0x0101);
-        HLE(SIMULIERT, "ARM7: IPC-FIFOs immer leer"); break;
+    case 0x184:   /* IPCFIFOCNT: Senden nie voll, Empfang = Zustand der Antwort-Warteschlange */
+        set_io16(0x184, (uint16_t)((io16(0x184) & 0x8404) | 0x0001 | (arm7_recv_empty() ? 0x0100 : 0)));
+        HLE(ORIGINAL, "IPC-FIFO-Status (Senden nie voll)"); break;
     case 0x180: {                                   /* IPCSYNC: ARM7-Ersatz für den PXI-Handshake */
         /* PXI_InitFifo (0x0203c080) zählt mit dem ARM7 herunter: ARM9 schreibt den
          * gelesenen Wert zurück, der ARM7 antwortet mit "Wert - 1". Das reicht für
@@ -196,22 +236,24 @@ static uint32_t io_read(uint32_t a, int size) {
         HLE(SIMULIERT, "ARM7: PXI-Handshake ueber IPCSYNC (Wert - 1)");
         break; }
     case 0x280: case 0x2b0: io[off + 1] &= 0x7f; break; /* Divider/Sqrt nie beschäftigt */
+    case 0x1a4: case 0x1a6: set_io32(0x1a4, card_read_romctrl()); break;
     }
     if (size == 1) return io[off];
     if (size == 2) return io16(off & ~1u);
     return io32(off & ~3u);
 }
 
-static void io_write(uint32_t a, uint32_t v, int size) {
+static void io_write_inner(uint32_t a, uint32_t v, int size) {
     io_count(a, 1);
     if (a >= 0x04100000u) return;
     uint32_t off = a & 0x1fff;
     if (off == 0x188) {
         static int shown;
-        HLE(FEHLT, "ARM7: IPC-FIFO-Senden (Nachrichten werden verworfen)");
-        /* NitroSDK-PXI: Bits 0-4 Kanal (Tag), Bit 5 Fehler, Bits 6-31 Daten */
+        HLE(ORIGINAL, "IPC-FIFO-Senden an den ARM7-Ersatz");
+        /* NitroSDK-PXI: Bits 0-4 Kanal (Tag), Bit 5 Flag, Bits 6-31 Daten */
         if (shown++ < 20)
-            fprintf(stderr, "  [pxi] an ARM7: Kanal %2u, Daten 0x%07x (roh %08x)\n", v & 0x1f, v >> 6, v);
+            fprintf(stderr, "  [pxi] an ARM7: Kanal %2u, Flag %u, Daten 0x%07x\n", v & 0x1f, (v >> 5) & 1, v >> 6);
+        arm7_pxi_send(v);
     }
     if ((off >= 0x290 && off < 0x2a0) || off == 0x280) HLE(ORIGINAL, "Hardware-Divider");
     if ((off >= 0x2b8 && off < 0x2c0) || off == 0x2b0) HLE(ORIGINAL, "Hardware-Wurzel");
@@ -230,8 +272,31 @@ static void io_write(uint32_t a, uint32_t v, int size) {
     if (off == 0x2b0) hw_sqrt();
     if (off >= 0xb8 && off < 0xe0) {
         int ch = (off - 0xb0) / 12;
-        if ((off - 0xb0) % 12 >= 8) dma_run(ch);
+        if ((off - 0xb0) % 12 >= 8) {
+            dma_run(ch);
+            /* Karten-DMA kann auch nach dem Start der Karte eingerichtet werden */
+            if (card_transfer_active()) { dma_card(); card_done_check(); }
+        }
     }
+    if (off >= 0x1a8 && off < 0x1b0) card_write_cmd(off - 0x1a8, v, size);
+    if ((off & ~3u) == 0x1a4 && (off + (uint32_t)size > 0x1a7)) {   /* oberes Byte (Start-Bit) geschrieben */
+        set_io32(0x1a4, card_write_romctrl(io32(0x1a4)));
+        dma_card();
+        card_done_check();
+    }
+}
+
+/* I/O-Zugriffe (inkl. DMA und Karte) laufen am Stück, ohne Interrupt dazwischen */
+static uint32_t io_read(uint32_t a, int size) {
+    platform_inhibit_irq++;
+    uint32_t v = io_read_inner(a, size);
+    platform_inhibit_irq--;
+    return v;
+}
+static void io_write(uint32_t a, uint32_t v, int size) {
+    platform_inhibit_irq++;
+    io_write_inner(a, v, size);
+    platform_inhibit_irq--;
 }
 
 #define BUDGET() do { \
@@ -239,20 +304,55 @@ static void io_write(uint32_t a, uint32_t v, int size) {
         if ((mem_accesses & TICK_MASK) == 0) tick_pending = 1; \
     } while (0)
 
+/* Interrupts auch in engen Warteschleifen ohne Funktionsaufruf: Steht etwas an,
+ * wird es beim nächsten Lesezugriff des Spielcodes ausgeliefert (nie aus eigenem
+ * Ersatz-Code heraus, nie mit gesperrten Interrupts, nie mit Thread-Wechsel). */
+int platform_inhibit_irq;
+static int in_irq;
+static int sched_active;
+static int deliver_pending(CPU *c);
+static void vblank(CPU *c);
+static uint64_t poll_irqs;
+
+/* Welche Funktion lief, als in einer Warteschleife unterbrochen wurde? */
+static struct { uint32_t addr; uint64_t n; } poll_where[16];
+static uint32_t ring_last(void);
+
+static void poll_deliver(void) {
+    uint32_t w = ring_last();
+    for (int i = 0; i < 16; i++)
+        if (poll_where[i].addr == w || !poll_where[i].addr) { poll_where[i].addr = w; poll_where[i].n++; break; }
+    platform_inhibit_irq++;
+    if (deliver_pending(&cpu)) {
+        poll_irqs++;
+        HLE(SIMULIERT, "Interrupt in einer Warteschleife ausgeliefert (beim Lesezugriff)");
+    } else if (tick_pending) {
+        tick_pending = 0;
+        HLE(SIMULIERT, "Zeit-Takt in einer Warteschleife (beim Lesezugriff)");
+        vblank(&cpu);
+    }
+    platform_inhibit_irq--;
+}
+
+#define POLL_IRQ() do { \
+        if (((irq_pending_extra & io32(0x210)) || tick_pending || !arm7_recv_empty()) && sched_active && !in_irq && \
+            !platform_inhibit_irq && (io[0x208] & 1) && !(cpu.cpsr_ctrl & 0x80)) poll_deliver(); \
+    } while (0)
+
 uint8_t rd8(uint32_t a) {
-    BUDGET();
+    BUDGET(); POLL_IRQ();
     uint8_t *p = ptr(a); if (p) return *p;
     if ((a >> 24) == 4) return (uint8_t)io_read(a, 1);
     unmapped("rd8", a); return 0;
 }
 uint16_t rd16(uint32_t a) {
-    BUDGET(); a &= ~1u;
+    BUDGET(); POLL_IRQ(); a &= ~1u;
     uint8_t *p = ptr(a); if (p) return (uint16_t)(p[0] | p[1] << 8);
     if ((a >> 24) == 4) return (uint16_t)io_read(a, 2);
     unmapped("rd16", a); return 0;
 }
 uint32_t rd32(uint32_t a) {
-    BUDGET();
+    BUDGET(); POLL_IRQ();
     uint32_t rot = (a & 3) * 8; a &= ~3u;
     uint32_t v;
     uint8_t *p = ptr(a);
@@ -325,11 +425,15 @@ static const char *fn_name(uint32_t addr) {
 static uint32_t ring[64];
 static unsigned ring_pos;
 static uint64_t fn_entries;
-static int in_irq;
-static void vblank(CPU *c);
 static void resched_if_pending(CPU *c);
+static uint32_t last_outside_irq;   /* zuletzt betretene Funktion außerhalb von Interrupts */
+static uint32_t ring_last(void) { return last_outside_irq; }
 
 void rc_enter(CPU *c, uint32_t addr) {
+    /* Antwort des ARM7 oder Geräte-Interrupt liegt bereit: am sicheren Punkt ausliefern */
+    if (!in_irq && (!arm7_recv_empty() || (irq_pending_extra & io32(0x210))) && (io[0x208] & 1) && !(c->cpsr_ctrl & 0x80)) {
+        if (deliver_pending(c)) resched_if_pending(c);
+    }
     /* Sicherer Punkt für den zählerbasierten Takt: nur wenn Interrupts erlaubt
      * sind (IME an, I-Bit im CPSR aus) – so wie auf der echten Hardware. */
     if (tick_pending && !in_irq && (io[0x208] & 1) && !(c->cpsr_ctrl & 0x80)) {
@@ -339,6 +443,7 @@ void rc_enter(CPU *c, uint32_t addr) {
         resched_if_pending(c);
     }
     ring[ring_pos++ & 63] = addr;
+    if (!in_irq) last_outside_irq = addr;
     fn_entries++;
     FnInfo *f = find_fn(addr);
     if (f) {
@@ -353,8 +458,11 @@ static uint64_t indirect_fail;
 void rc_call_indirect(CPU *c, uint32_t addr) {
     FnInfo *f = find_fn(addr);
     if (!f) {
-        if (indirect_fail++ < 10)
+        if (indirect_fail++ < 10) {
             fprintf(stderr, "  [call] kein Ziel fuer 0x%08x (aus %s)\n", addr, fn_name(ring[(ring_pos - 1) & 63]));
+            fprintf(stderr, "         r0=%08x r1=%08x r2=%08x r3=%08x sp=%08x lr=%08x\n",
+                    c->r[0], c->r[1], c->r[2], c->r[3], c->r[13], c->r[14]);
+        }
         if (addr == 0) stop("Aufruf ueber Nullzeiger");
         return;
     }
@@ -405,15 +513,29 @@ static void raise_irq(CPU *c, uint32_t bits) {
     set_io32(0x214, io32(0x214) | bits);
     if (in_irq || !(io32(0x208) & 1) || !(io32(0x210) & bits)) return;
     if ((c->cpsr_ctrl & 0x80) && !irq_force) return;   /* I-Bit: Interrupts gesperrt */
+    platform_inhibit_irq++;
     uint32_t handler = rd32(IRQ_HANDLER_PTR);
-    if (!handler) return;
-    sched_irq(c, bits, irq_entry, (void *)(uintptr_t)handler);
+    if (handler) sched_irq(c, bits, irq_entry, (void *)(uintptr_t)handler);
+    platform_inhibit_irq--;
+}
+
+#define IRQ_IPC_RECV (1u << 18)   /* IPC-Empfangs-FIFO nicht leer */
+
+/* Liefert anstehende Interrupts aus, die nicht vom Frame-Takt kommen
+ * (bisher: Antworten des ARM7). Rückgabe 1, wenn etwas ausgeliefert wurde. */
+static int deliver_pending(CPU *c) {
+    uint32_t bits = (arm7_recv_empty() ? 0 : IRQ_IPC_RECV) | irq_pending_extra;
+    bits &= io32(0x210);
+    if (!bits) return 0;
+    irq_pending_extra &= ~bits;
+    raise_irq(c, bits);
+    return 1;
 }
 
 void platform_idle(CPU *c) {
     irq_force = 1;
     HLE(SIMULIERT, "Leerlauf in OS_SelectThread: Interrupt trotz gesperrtem I-Bit");
-    vblank(c);
+    if (!deliver_pending(c)) vblank(c);
     irq_force = 0;
 }
 
@@ -556,7 +678,9 @@ void rc_mcr(CPU *c, int a, int b, int d, int e, uint32_t v) {
         } else {
             halts_locked = 0;
         }
-        vblank(c);
+        /* Steht schon ein Interrupt an (z. B. ARM7-Antwort), weckt der den
+         * Prozessor sofort; sonst vergeht ein Frame. */
+        if (!deliver_pending(c)) vblank(c);
         resched_if_pending(c);
         return;
     }
@@ -664,6 +788,10 @@ static void report(void) {
     for (int i = 0; i < TODO_MAX && todos[i].what; i++)
         printf("  %8llu  %s\n", (unsigned long long)todos[i].n, todos[i].what);
 
+    printf("\nIn Warteschleifen unterbrochen (zuletzt betretene Funktion):\n");
+    for (int i = 0; i < 16 && poll_where[i].addr; i++)
+        printf("  %8llu  0x%08x  %s\n", (unsigned long long)poll_where[i].n, poll_where[i].addr, fn_name(poll_where[i].addr));
+
     printf("\nThreads:\n");
     printf("  Scheduler-Verstoesse: %u\n", sched_violations);
     printf("  Trace: %llu Ereignisse, Pruefsumme %016llx\n",
@@ -678,6 +806,7 @@ static void boot_entry(CPU *c, void *arg) {
     (void)arg;
     c->r[13] = 0x027e3c00u;               /* System-Stack im DTCM */
     c->cpsr_ctrl = 0x1f;                  /* System-Modus, Interrupts erlaubt */
+    sched_active = 1;
     /* Reihenfolge wie am Ende von Entry */
     rc_func_02045cb8(c);
     rc_func_02019a18(c);
@@ -710,6 +839,17 @@ int main(int argc, char **argv) {
     load_file(dir, "arm9/itcm.bin", itcm, sizeof itcm);
     load_file(dir, "arm9/dtcm.bin", dtcm, sizeof dtcm);
     load_overlays(dir);
+
+    /* Was die Firmware vor dem Spielstart macht: ROM-Header nach 0x027FFE00,
+     * Chip-ID der Karte, Boot-Typ "normales Modul" */
+    char rom_path[1024];
+    snprintf(rom_path, sizeof rom_path, "%s/../../orig/baserom.nds", dir);
+    if (!card_load_rom(rom_path)) return 2;
+    for (uint32_t i = 0; i < 0x170; i++) wr8(0x027ffe00u + i, card_rom()[i]);
+    wr32(0x027ff800u, card_chip_id());
+    wr32(0x027ffc00u, card_chip_id());
+    wr16(0x027ffc40u, 1);
+    HLE(ORIGINAL, "Firmware: ROM-Header, Chip-ID und Boot-Typ im Systembereich");
 
     /* Was Entry an Hardware-Einstellungen macht */
     wr32(IRQ_HANDLER_PTR, 0x01ff8d70u);   /* OS-Interrupt-Handler im ITCM */

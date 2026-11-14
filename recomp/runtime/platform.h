@@ -19,6 +19,10 @@ int platform_is_function(uint32_t addr);
 /* Vom IRQ-Thread-Wechsel gesetzt: an einem sicheren Punkt neu planen */
 extern int platform_resched_pending;
 
+/* > 0, solange eigener Ersatz-Code läuft: dann werden keine Interrupts aus
+ * Speicherzugriffen heraus ausgeliefert */
+extern int platform_inhibit_irq;
+
 /* Schlüssel des Start-Threads, bis er sich per OS_SaveContext an seine
  * SDK-Thread-Struktur bindet */
 #define BOOT_THREAD_KEY 0x00000001u

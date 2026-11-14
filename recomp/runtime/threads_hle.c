@@ -42,6 +42,7 @@ static void call_preserving(CPU *c, void (*fn)(CPU *), uint32_t arg) {
 /* ---------------------------------------------------------------- OS_SaveContext */
 
 void hle_OS_SaveContext(CPU *c) {
+    platform_inhibit_irq++;
     uint32_t ctx = c->r[0];
     HLE(ORIGINAL, "OS_SaveContext: Kontext sichern, Fiber an Thread binden");
     call_preserving(c, rc_CP_SaveContext, ctx + CTX_CP);
@@ -59,6 +60,7 @@ void hle_OS_SaveContext(CPU *c) {
     else if (me != ctx) platform_stop("OS_SaveContext fuer einen fremden Thread");
 
     c->r[0] = 0;                                /* "gerade gesichert" */
+    platform_inhibit_irq--;
 }
 
 /* ---------------------------------------------------------------- OS_LoadContext */
@@ -66,6 +68,7 @@ void hle_OS_SaveContext(CPU *c) {
 /* Start eines Threads, der noch nie lief (angelegt mit OS_CreateThread) */
 static void ds_thread_start(CPU *c, void *arg) {
     uint32_t ctx = (uint32_t)(uintptr_t)arg;
+    platform_inhibit_irq++;
     uint32_t cpsr = rd32(ctx + CTX_CPSR);
     c->cpsr_ctrl = cpsr & 0x0fffffffu;
     c->n = cpsr >> 31; c->z = (cpsr >> 30) & 1; c->cf = (cpsr >> 29) & 1; c->v = (cpsr >> 28) & 1;
@@ -79,6 +82,7 @@ static void ds_thread_start(CPU *c, void *arg) {
     fprintf(stderr, "  [thread] Start %08x: pc=%08x sp=%08x r0=%08x lr=%08x\n", ctx, pc, c->r[13], c->r[0], ret);
     if (!platform_is_function(pc)) platform_stop("Thread-Start nicht an einem Funktionsanfang");
     HLE(ORIGINAL, "Thread-Start aus dem SDK-Kontext (pc, sp, r0, lr)");
+    platform_inhibit_irq--;
     rc_call_indirect(c, pc);
     /* Thread-Funktion ist zurückgekehrt: weiter bei lr (normalerweise OS_ExitThread) */
     rc_call_indirect(c, ret);
@@ -88,9 +92,13 @@ static void ds_thread_start(CPU *c, void *arg) {
 void hle_OS_LoadContext(CPU *c) {
     uint32_t ctx = c->r[0];
     HLE(ORIGINAL, "OS_LoadContext: Wechsel zum Fiber des Ziel-Threads");
+    platform_inhibit_irq++;
     call_preserving(c, rc_CP_RestoreContext, ctx + CTX_CP);
+    platform_inhibit_irq--;   /* nie ueber einen Thread-Wechsel hinweg sperren */
     if (ctx == sched_current()) platform_stop("OS_LoadContext auf den eigenen Thread");
+    if (platform_inhibit_irq != 0) platform_stop("Interrupt-Sperre ueber einen Thread-Wechsel hinweg (vorher)");
     sched_switch(c, ctx, ds_thread_start, (void *)(uintptr_t)ctx);
+    if (platform_inhibit_irq != 0) platform_stop("Interrupt-Sperre ueber einen Thread-Wechsel hinweg (nachher)");
     /* Wir laufen wieder: entspricht im Original "OS_SaveContext gab 1 zurück".
      * Der Aufrufer (OS_RescheduleThread) kehrt danach einfach zurück. */
 }
@@ -113,6 +121,7 @@ void hle_OS_SelectThread(CPU *c) {
 /* ---------------------------------------------------------------- IRQ-Thread-Wechsel */
 
 void hle_OS_IrqHandler_ThreadSwitch(CPU *c) {
+    platform_inhibit_irq++;
     /* Teil 1 wie im Original: alle Threads der IRQ-Warteschlange wecken */
     uint32_t t = rd32(IRQ_THREAD_QUEUE);
     if (t) {
@@ -136,5 +145,6 @@ void hle_OS_IrqHandler_ThreadSwitch(CPU *c) {
         platform_resched_pending = 1;
         HLE(SIMULIERT, "IRQ: Thread-Wechsel erst nach dem Interrupt am sicheren Punkt");
     }
+    platform_inhibit_irq--;
     c->r[13] += 4;   /* wie "ldr pc, [sp], #4": von OS_IrqHandler gesichertes lr abräumen */
 }

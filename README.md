@@ -58,7 +58,10 @@ Lege den ROM als `orig/baserom.nds` ab (wird von Git ignoriert).
       → [`docs/boot.md`](docs/boot.md): ~140 Funktionen inkl. OS/PXI/IRQ-Init und Tastenabfrage
 - [x] Thread-Modell: SDK-Threads als Host-Fibers, deterministisch, 7 Einzeltests
       → [`docs/threads.md`](docs/threads.md) (Zweig `thread-model`)
-- [ ] ARM7-Ersatz für den Kartenzugriff (PXI-Kanal 11): aktueller Halt beim Start
+- [x] ARM7-Ersatz für Karte, Uhr, Touch; Karten-Hardware; Dateisystem und Overlay-Laden
+      laufen → [`docs/arm7.md`](docs/arm7.md)
+- [ ] Speicherverwaltung des Spiels (aktueller Halt beim Start, `0x02019eac`)
+- [ ] ARM7-Ersatz für Sound (Kanal 7)
 
 ### Phase 3: Plattform-Schicht (SDL + OpenGL)
 
