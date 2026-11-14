@@ -162,8 +162,13 @@ reproduzierbar.
     (`.L_0208cf9c`). Oben findet unten noch nicht bereit vor, unten findet oben im Zustand 2
     – beide setzen nur das Bit, danach stellt `0208d0cc` beide auf Zustand 3
     (`func_ov004_02091bbc`, wartet auf Fade) → Stillstand. Vermutung: Reihenfolge/Abstand
-    der beiden Einrichtungen hängt an unserem Lade-Timing (Karte). Prüfen: wer wertet das
-    „ausstehend“-Bit aus, und ob mit anderem `BIS_CARD_DELAY` beide im selben Frame laufen.
+    der beiden Einrichtungen hängt an unserem Lade-Timing (Karte). **Widerlegt:** Mit
+    `BIS_CARD_DELAY=512` bzw. `8192` laufen beide im selben Frame (2238 bzw. 2235), das Bild
+    bleibt trotzdem dunkel – die Reihenfolge oben → unten führt immer zur Blockade.
+    **Nächster Schritt:** (a) wer wertet das „ausstehend“-Bit (`.L_0208d0c0`-Bitfeld) später
+    aus und warum passiert das bei uns nicht; (b) ob das Statuswort (Bits 8-10) beim echten
+    Spiel vor `0208c700` ungleich 0 ist, also wer es normalerweise setzt (Kandidat:
+    Ereignis-/Skriptsystem, z. B. `func_ov006_0211d3e8`, `func_ov007_0210fdc0`).
   - Neue Hilfen: `BIS_PROFILE_FROM=frame` (Zähler „Häufigste“ ab diesem Frame), der Bericht
     zeigt die zuletzt außerhalb von Interrupts betretene Funktion und deren letzte Lesezugriffe
     (findet Warteschleifen ohne Funktionsaufrufe).
