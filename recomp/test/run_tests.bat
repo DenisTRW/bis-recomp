@@ -9,4 +9,9 @@ if not exist "%OUT%" mkdir "%OUT%"
 python -I "%ROOT%\recomp\recomp.py" "%ROOT%" --only Pad_Update --out "%OUT%\pad" || exit /b 1
 gcc -O2 -Wall -Wno-unused-label -I "%ROOT%\recomp\include" -I "%OUT%\pad" -I "%~dp0." ^
     -o "%OUT%\test_pad_update.exe" "%~dp0test_pad_update.c" "%~dp0harness.c" "%~dp0functable_empty.c" "%OUT%\pad\main.c" || exit /b 1
-"%OUT%\test_pad_update.exe" "%ROOT%\extract\eur\arm9\arm9.bin"
+"%OUT%\test_pad_update.exe" "%ROOT%\extract\eur\arm9\arm9.bin" || exit /b 1
+echo.
+echo === Scheduler-Tests ===
+gcc -O2 -Wall -Wextra -I "%ROOT%\recomp\include" -I "%ROOT%\recomp\runtime" ^
+    -o "%OUT%\test_sched.exe" "%~dp0test_sched.c" "%ROOT%\recomp\runtime\sched.c" || exit /b 1
+"%OUT%\test_sched.exe" || exit /b 1
