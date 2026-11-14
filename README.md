@@ -49,7 +49,9 @@ Lege den ROM als `orig/baserom.nds` ab (wird von Git ignoriert).
 ### Phase 2: Recompiler
 
 - [x] Befehls-Statistik: Welche ARM-/Thumb-Befehle, indirekte Sprünge, Sprungtabellen? → [`docs/recomp.md`](docs/recomp.md)
-- [ ] Recompiler-Prototyp: ARM/Thumb → C, Funktion für Funktion (Grenzen aus dsd)
+- [x] Recompiler-Prototyp: ARM → C, Funktion für Funktion (Grenzen aus dsd), 99,1 % der Funktionen vollständig
+- [ ] Erzeugten Code mit einem C-Compiler bauen und testen (Test-Harness)
+- [ ] Rest-TODOs: rohe Offsets, Sprünge in fremde Funktionen, Sprungtabellen ohne `cmp`
 - [ ] Overlays: Funktionen pro Overlay, Laden/Entladen zur Laufzeit
 - [ ] Hauptprogramm kompiliert und läuft bis zur ersten Hardware-Abfrage
 

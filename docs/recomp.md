@@ -47,6 +47,49 @@ Alles Standard-ARMv5TE, keine Exoten. Multiplikationen (`mul`, `mla`, `smull`,
 | 6 | `<illegal>` | Vermutlich Daten, die dsd als Code markiert hat – prüfen |
 | 1 | `swp` | Atomarer Tausch → normaler Tausch (Single-Thread) |
 
+## Prototyp (`recomp/recomp.py`)
+
+```
+tools\dsd.exe dis --config-path config\eur\arm9\config.yaml --asm-path build\asm
+python -I recomp\recomp.py .               # alles
+python -I recomp\recomp.py . --only Pad_Update
+```
+
+Ausgabe in `build/recomp/`: eine `.c`-Datei pro Modul (`main.c`, `itcm.c`, `ov000.c` …),
+`funcs.h` mit allen Prototypen und `functable.c` (Adresse → Funktion für indirekte Aufrufe).
+Der Laufzeit-Header liegt in `recomp/include/recomp.h`.
+
+**Erster Lauf (alle Module):**
+
+| | |
+|---|---|
+| Funktionen vollständig übersetzt | 12 116 von 12 220 (99,1 %) |
+| Befehle übersetzt | 801 791 von 802 835 (99,87 %) |
+| Laufzeit | ~16 s |
+| Erzeugter C-Code | ~83 MB |
+
+Noch nicht übersetzt (werden als `RC_TODO("…")` markiert):
+
+| Anzahl | Fall |
+|---:|---|
+| 34 | `b #offset` (roher Offset statt Label, z. B. in der ITCM-Dekompression) |
+| 29 | Schreiben auf `pc` außer Sprungtabellen/Rücksprung |
+| 24 + 4 | Sprung mitten in eine andere Funktion (`.L_02045174`, `.L_02076e24`) |
+| 20 | Sprungtabelle ohne erkennbares `cmp` davor |
+| ~40 | Sprungziel als rohe Zahl (`#0x3d64` …) |
+| 8 | Thumb-Funktionen, die keine reinen BIOS-Stubs sind |
+| 6 | `<illegal>` (Daten, die als Code markiert sind) |
+| 3 | Literal-Pool *vor* der Funktion (`0x0203ece0`, siehe dsd-Warnung) |
+
+**Bekannte Vereinfachungen im Prototyp:**
+- Carry bei Immediate-Operanden mit Rotation (`movs r0, #0x…`) bleibt unverändert.
+- Ein Rücksprung (`ldm sp!, {…, pc}`, `bx lr`) wird immer als C-`return` behandelt.
+  Das stimmt, solange niemand die gespeicherte Rücksprungadresse manipuliert.
+- Ein `pc`-Wert als Operand ist immer `Adresse + 8` (ARM-Pipeline). Bei Verschiebung um
+  ein Register wären es eigentlich `+12`, das ist hier aber egal.
+- Aufrufe zwischen Modulen gehen direkt an die Zielfunktion (dsd hat das Ziel-Overlay
+  aufgelöst). Ob das Overlay zur Laufzeit wirklich geladen ist, prüft niemand.
+
 ## Folgerungen für das Design
 
 1. **Ein Decoder für ARM reicht** (plus ein paar BIOS-Stubs in C).
