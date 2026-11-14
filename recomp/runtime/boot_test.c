@@ -189,9 +189,18 @@ static void dma_run(int ch) {
     HLE(FEHLT, "DMA mit Start bei HBlank/Hauptbildschirm/Hauptspeicher-Anzeige");
 }
 
+/* Interne Adresszähler je Kanal (ORIGINAL nach GBATEK) */
+static uint32_t dma_isrc[4], dma_idst[4];
+static void dma_latch(int ch) {
+    uint32_t base = 0xb0 + (uint32_t)ch * 12;
+    dma_isrc[ch] = io32(base); dma_idst[ch] = io32(base + 4);
+}
+
 static void dma_copy(int ch) {
     uint32_t base = 0xb0 + ch * 12;
-    uint32_t src = io32(base), dst = io32(base + 4), cnt = io32(base + 8);
+    uint32_t cnt = io32(base + 8);
+    if (((cnt >> 21) & 3) == 3) dma_idst[ch] = io32(base + 4);   /* Ziel "Inkrement+Neuladen" */
+    uint32_t src = dma_isrc[ch], dst = dma_idst[ch];
     uint32_t n = cnt & 0x1fffff; if (!n) n = 0x200000;
     if (getenv("BIS_DMALOG")) {
         static int shown;
@@ -206,6 +215,7 @@ static void dma_copy(int ch) {
         if (sctl == 0) src += step; else if (sctl == 1) src -= step;
         if (dctl == 0 || dctl == 3) dst += step; else if (dctl == 1) dst -= step;
     }
+    dma_isrc[ch] = src; dma_idst[ch] = dst;
     dma_count++;
     /* Repeat (Bit 25) bei VBlank-DMA: bleibt aktiv, startet beim nächsten VBlank erneut */
     if (!(((cnt >> 27) & 7) == 1 && ((cnt >> 25) & 1))) set_io32(base + 8, cnt & ~0x80000000u);
@@ -225,13 +235,15 @@ static void dma_card(void) {
         uint32_t base = 0xb0 + (uint32_t)ch * 12;
         uint32_t cnt = io32(base + 8);
         if (!(cnt & 0x80000000u) || ((cnt >> 27) & 7) != 5) continue;
-        uint32_t dst = io32(base + 4);
         int dctl = (cnt >> 21) & 3;
+        if (dctl == 3) dma_idst[ch] = io32(base + 4);
+        uint32_t dst = dma_idst[ch];
         HLE(ORIGINAL, "DMA vom Karten-Datenport");
         while (card_transfer_active()) {
             wr32(dst, card_read_data());
             if (dctl == 0 || dctl == 3) dst += 4; else if (dctl == 1) dst -= 4;
         }
+        dma_idst[ch] = dst;
         dma_count++;
         if (!((cnt >> 25) & 1)) set_io32(base + 8, cnt & ~0x80000000u);   /* ohne Repeat: fertig */
         return;
@@ -242,9 +254,9 @@ static void dma_card(void) {
  * Streaming-Lader (0x0201c9ac) verlässt sich vermutlich darauf: Er wertet noch Reste im
  * Ringpuffer aus, während der nächste Block unterwegs ist. Kopieren wir sofort, werden
  * diese Reste überschrieben (Hänger nach "Neues Spiel", siehe docs/grafik.md).
- * EXPERIMENTELL: BIS_CARD_DELAY=n verzögert die Übertragung um n Speicherzugriffe. Mit
- * Verzögerung bleibt derzeit schon der Start hängen (Ablauf des Karten-SDK noch nicht
- * genau genug nachgebildet), deshalb ist der Standard 0 = sofort. */
+ * EXPERIMENTELL: BIS_CARD_DELAY=n verzögert die Übertragung um n Speicherzugriffe. Seit den
+ * internen DMA-Adresszählern läuft das mit n = 2048 stabil (siehe docs/grafik.md); der
+ * Standard ist noch 0 = sofort. */
 static uint32_t card_countdown, card_delay = 0;
 static int card_fire_pending;
 static int dma_card_armed(void) {
@@ -367,9 +379,15 @@ static void io_write_inner(uint32_t a, uint32_t v, int size) {
         if (card_delay) irq_pending_extra &= ~mask;
         return;
     }
+    int dma_ch = (off >= 0xb8 && off < 0xe0 && (off - 0xb0) % 12 >= 8) ? (int)((off - 0xb0) / 12) : -1;
+    uint32_t dma_was_on = dma_ch >= 0 ? io32(0xb8 + (uint32_t)dma_ch * 12) & 0x80000000u : 0;
     if (size == 1) io[off] = (uint8_t)v;
     else if (size == 2) set_io16(off & ~1u, (uint16_t)v);
     else set_io32(off & ~3u, v);
+    /* Hardware: Quelle/Ziel werden nur beim Einschalten (Bit 31: 0 -> 1) in die internen
+     * Zähler übernommen. Das SDK stoppt Karten-DMA, indem es den laufenden Kanal kurz auf
+     * "sofort" stellt; das eine Dummy-Wort geht dann an die weitergezählte Adresse. */
+    if (dma_ch >= 0 && !dma_was_on && (io32(0xb8 + (uint32_t)dma_ch * 12) & 0x80000000u)) dma_latch(dma_ch);
     if (off >= 0x290 && off < 0x2a0) hw_div();
     if (off == 0x280) hw_div();
     if (off >= 0x2b8 && off < 0x2c0) hw_sqrt();

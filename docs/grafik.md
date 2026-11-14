@@ -92,9 +92,20 @@ reproduzierbar.
     `0x01ff80a4`), und beim Wechsel zum Logo stürzt das Spiel ab (Frame 317 bei n = 2048,
     später bei größerem n). Ursache noch offen: Beim Parsen steht im Ringpuffer nicht der
     erwartete Block (Datensatzlänge 1 statt `0x0a74` laut ROM bei `0x0393a854`).
-  - Deshalb ist der Standard weiterhin „sofort“ (`BIS_CARD_DELAY=0`). Nächster Schritt:
-    beobachten, wann der DMA-Block im Ringpuffer ankommt und was der Lader zu diesem Zeitpunkt
-    liest (Watchpoint auf `0x0207eb94` mit `BIS_CARD_DELAY=2048`).
+  - **Behoben (DMA-Adresszähler):** Das SDK stoppt den Karten-DMA (`0x0203a3bc`), indem es
+    den noch aktiven Kanal kurz auf „sofort“ stellt (CNT `85…`, dann `05…`). Dabei wird ein
+    Dummy-Wort übertragen. Auf der Hardware geht es an die **interne, schon weitergezählte**
+    Zieladresse; Quelle/Ziel werden nur beim Einschalten (Bit 31: 0 → 1) übernommen. Wir
+    nahmen die Register-Adresse und überschrieben so das erste Wort jedes frisch geladenen
+    Blocks mit `ffffffff` → falsche Datensatzlängen → zerstörtes Objekt. Jetzt gibt es
+    interne Zähler je Kanal (`dma_isrc/dma_idst`). Standardmodus unverändert (gleiche
+    Prüfsummen wie vorher).
+  - Mit `BIS_CARD_DELAY=2048` läuft der Start sauber, die Dateiauswahl funktioniert, und nach
+    „Start“ (`BIS_INPUT="1100:start,1400:a,1900:a,2200:a"`) wird das `FSFile` nicht mehr
+    zerstört. Das Bild bleibt trotzdem schwarz: In Frame 2231 setzt die neue Szene
+    (`0x021117e8`) alle VRAM-Bänke auf 0 und ordnet sie bis Frame 2700 nicht neu zu; die
+    meiste Zeit läuft `func_ov125_02077a70`. **Nächster Schritt:** klären, worauf die Szene
+    dort wartet. Der Standard ist noch „sofort“ (`BIS_CARD_DELAY=0`).
 
 Fehlersuche: `boot_test.exe … [funktion_hex] [adresse:laenge]` zeigt Argumente samt Frame
 und Vorgeschichte bzw. Schreibzugriffe mit Frame, `lr`, `sp` und Vorgeschichte. Umgebungsvariablen:
