@@ -24,6 +24,9 @@
 #include "sched.h"
 #include "arm7_hle.h"
 #include "card.h"
+#include "vram.h"
+#include "render2d.h"
+#include "png.h"
 
 static uint32_t irq_pending_extra;   /* von Geräten angeforderte Interrupts (z. B. Karte fertig) */
 #define IRQ_CARD_DONE (1u << 19)
@@ -57,7 +60,6 @@ static uint8_t swram[0x8000];
 static uint8_t dtcm[0x4000];
 static uint8_t io[0x2000];
 static uint8_t pal[0x800];
-static uint8_t vram[0x900000];
 static uint8_t oam[0x800];
 
 static uint64_t mem_accesses, mem_budget;
@@ -86,7 +88,7 @@ static inline uint8_t *ptr(uint32_t a) {
         return &ram[a & 0x3fffff];
     case 0x03: return &swram[a & 0x7fff];
     case 0x05: return &pal[a & 0x7ff];
-    case 0x06: { uint32_t o = a & 0xffffff; return o < sizeof vram ? &vram[o] : NULL; }
+    case 0x06: return vram_cpu_ptr(a);   /* Bänke A-I nach VRAMCNT */
     case 0x07: return &oam[a & 0x7ff];
     default: return NULL;
     }
@@ -111,6 +113,11 @@ static uint32_t unmapped_count;
 static void unmapped(const char *op, uint32_t a) {
     if ((a >> 24) == 0x08 || (a >> 24) == 0x09 || (a >> 24) == 0x0a) {
         HLE(SIMULIERT, "GBA-Slot leer (liefert 0 statt Open-Bus)");
+        return;
+    }
+    if ((a >> 24) == 0x06) {
+        /* Bereich ohne zugeordnete VRAM-Bank: auch die Hardware ignoriert das */
+        HLE(ORIGINAL, "VRAM-Zugriff ohne zugeordnete Bank (ignoriert wie Hardware)");
         return;
     }
     HLE(FEHLT, "Zugriff auf nicht nachgebildeten Speicher");
@@ -277,6 +284,11 @@ static void io_write_inner(uint32_t a, uint32_t v, int size) {
             /* Karten-DMA kann auch nach dem Start der Karte eingerichtet werden */
             if (card_transfer_active()) { dma_card(); card_done_check(); }
         }
+    }
+    /* VRAMCNT A-G (0x240-0x246), H/I (0x248/0x249); 0x247 ist WRAMCNT */
+    for (uint32_t k = off & ~(uint32_t)(size - 1); k < (off & ~(uint32_t)(size - 1)) + (uint32_t)size; k++) {
+        if (k >= 0x240 && k <= 0x246) { vram_set_cnt((int)(k - 0x240), io[k]); HLE(ORIGINAL, "VRAM-Baenke zuordnen (VRAMCNT)"); }
+        if (k == 0x248 || k == 0x249) { vram_set_cnt((int)(k - 0x248 + 7), io[k]); HLE(ORIGINAL, "VRAM-Baenke zuordnen (VRAMCNT)"); }
     }
     if (off >= 0x1a8 && off < 0x1b0) card_write_cmd(off - 0x1a8, v, size);
     if ((off & ~3u) == 0x1a4 && (off + (uint32_t)size > 0x1a7)) {   /* oberes Byte (Start-Bit) geschrieben */
@@ -550,6 +562,31 @@ static int deliver_pending(CPU *c) {
     return 1;
 }
 
+/* ---- Bild ausgeben: beide Engines als PNG (oben/unten nach POWCNT1 Bit 15) */
+static char frames_dir[1024];
+static uint64_t dump_every = 100;
+
+static void dump_frame(const char *tag) {
+    static uint32_t top[256 * 192], bottom[256 * 192], both[256 * 384];
+    static int warned;
+    Gfx2D g = { io, pal, oam };
+    unsigned missing = 0;
+    int a_on_top = (io16(0x304) >> 15) & 1;
+    render2d_engine(&g, a_on_top ? 0 : 1, top, 1, &missing);
+    render2d_engine(&g, a_on_top ? 1 : 0, bottom, 1, &missing);
+    memcpy(both, top, sizeof top);
+    memcpy(both + 256 * 192, bottom, sizeof bottom);
+    char path[1200];
+    snprintf(path, sizeof path, "%s/frame_%s.png", frames_dir, tag);
+    if (!png_write_rgb(path, 256, 384, both) && !warned++) fprintf(stderr, "  [bild] kann %s nicht schreiben\n", path);
+    static const char *const miss_name[] = {
+        "Renderer: affine/erweiterte Hintergruende", "Renderer: 3D-Ebene (BG0 von Engine A)",
+        "Renderer: affine Sprites", "Renderer: Bitmap-Sprites", "Renderer: Fenster",
+        "Renderer: Alpha-Blending", "Renderer: Anzeigemodus 2/3 (VRAM/Hauptspeicher)", "Renderer: Mosaik" };
+    for (int i = 0; i < 8; i++) if (missing & (1u << i)) HLE(FEHLT, miss_name[i]);
+    HLE(ORIGINAL, "Renderer: Text-Hintergruende, Sprites, Paletten, Helligkeit");
+}
+
 void platform_idle(CPU *c) {
     irq_force = 1;
     HLE(SIMULIERT, "Leerlauf in OS_SelectThread: Interrupt trotz gesperrtem I-Bit");
@@ -570,6 +607,13 @@ static void resched_if_pending(CPU *c) {
 static void vblank(CPU *c) {
     sched_trace(TR_TICK, (uint32_t)frames, 0);
     frames++;
+    if (dump_every && frames % dump_every == 0) {
+        char tag[32];
+        snprintf(tag, sizeof tag, "%05llu", (unsigned long long)frames);
+        platform_inhibit_irq++;
+        dump_frame(tag);
+        platform_inhibit_irq--;
+    }
     if (frame_limit && frames >= frame_limit) stop("Frame-Limit erreicht");
     io[4] |= 1;
     /* Pro Frame: VCount-Match (Bit 2) und VBlank (Bit 0).
@@ -823,11 +867,10 @@ static void report(void) {
            io32(0x000), io32(0x1000), io16(0x304), io[0x240], io[0x241], io[0x242], io[0x243],
            io[0x244], io[0x245], io[0x246], io[0x248], io[0x249]);
     {
-        unsigned nz_pal = 0, nz_vram = 0, nz_oam = 0;
+        unsigned nz_pal = 0, nz_oam = 0;
         for (unsigned i = 0; i < sizeof pal; i++) nz_pal += pal[i] != 0;
-        for (unsigned i = 0; i < sizeof vram; i++) nz_vram += vram[i] != 0;
         for (unsigned i = 0; i < sizeof oam; i++) nz_oam += oam[i] != 0;
-        printf("  Nicht-Null-Bytes: Paletten %u / %u, VRAM %u, OAM %u\n", nz_pal, (unsigned)sizeof pal, nz_vram, nz_oam);
+        printf("  Nicht-Null-Bytes: Paletten %u / %u, OAM %u\n", nz_pal, (unsigned)sizeof pal, nz_oam);
     }
 
     printf("\nIn Warteschleifen unterbrochen (zuletzt betretene Funktion):\n");
@@ -911,7 +954,9 @@ int main(int argc, char **argv) {
            nfns, (unsigned long long)frame_limit, (unsigned long long)(mem_budget / 1000000));
     /* Der Start-Thread läuft als erster Fiber; er bindet sich beim ersten
      * OS_SaveContext an seine SDK-Thread-Struktur. */
+    snprintf(frames_dir, sizeof frames_dir, "%s/../../build/frames", dir);
     sched_run(&cpu, BOOT_THREAD_KEY, boot_entry, NULL);
+    dump_frame("ende");
     report();
     return 0;
 }

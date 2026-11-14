@@ -62,7 +62,9 @@ Lege den ROM als `orig/baserom.nds` ab (wird von Git ignoriert).
       laufen → [`docs/arm7.md`](docs/arm7.md)
 - [x] Speicherverwaltung: war ein Recompiler-Fehler in `MI_CpuFillFast` (berechnete Sprünge)
 - [x] **Hauptschleife läuft** (600 Frames, ~950 Funktionen, Anzeige an, VRAM gefüllt)
-- [ ] 2D-Renderer (BG-Ebenen, Sprites) – zuerst als PNG, dann SDL-Fenster → **erstes Bild**
+- [x] **Erstes Bild** (15.11.2026): VRAM-Bänke, 2D-Renderer (Text-BGs, Sprites), PNG
+      → Nintendo-Logo mit Mario & Luigi nach 600 Frames → [`docs/grafik.md`](docs/grafik.md)
+- [ ] SDL-Fenster statt PNG (Echtzeit, Tastatur)
 - [ ] 3D-Renderer (Anzeige A nutzt BG0 als 3D-Ebene)
 - [ ] ARM7-Ersatz für Sound (Kanal 7)
 - [ ] Sprünge mitten in Funktionen (`0x02045xxx`)
