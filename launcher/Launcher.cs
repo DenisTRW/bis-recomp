@@ -739,21 +739,14 @@ namespace RecompLauncher
             inner.Children.Add(shotImage);
 
             galleryEmpty = new Grid { Visibility = Visibility.Collapsed };
-            var empty = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(40) };
-            var ic = Glyph("", 36);
-            ((TextBlock)ic).Foreground = Theme.TextFaint;
-            ((TextBlock)ic).HorizontalAlignment = HorizontalAlignment.Center;
-            empty.Children.Add(ic);
-            var et = Theme.Label("Add your cover and screenshots", 15, Theme.Text, FontWeights.SemiBold);
-            et.TextAlignment = TextAlignment.Center;
-            et.Margin = new Thickness(0, 12, 0, 6);
-            empty.Children.Add(et);
-            var ed = Theme.Label("Save a photo of your game's cover as cover.jpg and screenshots as PNG/JPG in the screenshots folder. They stay on your PC.", 12.5, Theme.TextDim, FontWeights.Normal);
-            ed.TextAlignment = TextAlignment.Center;
-            empty.Children.Add(ed);
-            var open = Theme.MakeButton("Open screenshots folder", Theme.Control, Theme.Text, 12.5, new Thickness(14, 7, 14, 8), 8);
-            open.Margin = new Thickness(0, 14, 0, 0);
+            // Placeholder without images: a simple dual-screen handheld drawn in the accent colors
+            var empty = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            empty.Children.Add(PlaceholderArt());
+            var open = Theme.MakeButton("Add cover and screenshots", Brushes.Transparent, Theme.TextFaint, 12, new Thickness(10, 4, 10, 5), 8);
+            open.FontWeight = FontWeights.Normal;
+            open.Margin = new Thickness(0, 26, 0, 0);
             open.HorizontalAlignment = HorizontalAlignment.Center;
+            open.ToolTip = "Save a photo of your game's case as cover.jpg and screenshots as PNG/JPG in this folder. They stay on your PC.";
             open.Click += delegate { OpenShotDir(); };
             empty.Children.Add(open);
             galleryEmpty.Children.Add(empty);
@@ -777,6 +770,38 @@ namespace RecompLauncher
             galleryTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
             galleryTimer.Tick += delegate { if (IsActive && shots.Count > 1) Show(shotIndex + 1, false); };
             return p;
+        }
+
+        static UIElement PlaceholderArt()
+        {
+            var a = Theme.Accent;
+            Func<double, double, Border> screen = (w, h) => new Border
+            {
+                Width = w, Height = h, CornerRadius = new CornerRadius(8),
+                Background = new LinearGradientBrush(Color.FromArgb(0xCC, a.R, a.G, a.B), Theme.Darken(a, 0.65), new Point(0, 0), new Point(1, 1)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF)), BorderThickness = new Thickness(1)
+            };
+            Func<Border> half = () => new Border
+            {
+                Width = 210, CornerRadius = new CornerRadius(18), Padding = new Thickness(18, 14, 18, 14),
+                Background = new LinearGradientBrush(Theme.Hex("#2A2E37").Color, Theme.Hex("#1B1E25").Color, 90),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)), BorderThickness = new Thickness(1)
+            };
+            var top = half();
+            var topScreen = screen(174, 128);
+            var play = new TextBlock { Text = "", FontFamily = new FontFamily("Segoe MDL2 Assets, Segoe Fluent Icons"), FontSize = 34, Foreground = new SolidColorBrush(Color.FromArgb(0xE6, 0xFF, 0xFF, 0xFF)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            topScreen.Child = play;
+            top.Child = topScreen;
+            var bottom = half();
+            var bottomScreen = screen(150, 112);
+            bottomScreen.Opacity = 0.75;
+            bottom.Child = bottomScreen;
+            var art = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
+            art.Children.Add(top);
+            art.Children.Add(new Border { Width = 170, Height = 8, Background = Theme.Hex("#14161B") });   // hinge
+            art.Children.Add(bottom);
+            art.Effect = new DropShadowEffect { Color = a, BlurRadius = 50, ShadowDepth = 0, Opacity = 0.35 };
+            return art;
         }
 
         Button ArrowButton(string glyph, HorizontalAlignment side)
