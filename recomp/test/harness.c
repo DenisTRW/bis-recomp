@@ -47,8 +47,21 @@ int harness_load_arm9(const char *path) {
     return n > 0;
 }
 
-void rc_call_indirect(CPU *c, uint32_t addr) { (void)c; fprintf(stderr, "[harness] call_indirect 0x%08x\n", addr); harness_todo_count++; }
-void rc_jump_indirect(CPU *c, uint32_t addr) { (void)c; fprintf(stderr, "[harness] jump_indirect 0x%08x\n", addr); harness_todo_count++; }
+/* Indirekte Aufrufe/Sprünge: über die Funktionstabelle des Tests verteilen
+ * (bei Einzeltests mit functable_empty.c gibt es keine Ziele -> wird gezählt) */
+static int dispatch(CPU *c, uint32_t addr) {
+    for (unsigned i = 0; i < rc_functable_count; i++)
+        if (rc_functable[i].addr == (addr & ~1u)) { rc_functable[i].fn(c); return 1; }
+    return 0;
+}
+void rc_call_indirect(CPU *c, uint32_t addr) {
+    if (dispatch(c, addr)) return;
+    fprintf(stderr, "[harness] call_indirect 0x%08x\n", addr); harness_todo_count++;
+}
+void rc_jump_indirect(CPU *c, uint32_t addr) {
+    if (dispatch(c, addr)) return;
+    fprintf(stderr, "[harness] jump_indirect 0x%08x\n", addr); harness_todo_count++;
+}
 void rc_fallthrough(CPU *c, uint32_t addr) { (void)c; fprintf(stderr, "[harness] fallthrough 0x%08x\n", addr); harness_todo_count++; }
 void rc_swi(CPU *c, uint32_t n) { (void)c; fprintf(stderr, "[harness] swi 0x%x\n", n); harness_todo_count++; }
 uint32_t rc_mrs(CPU *c, int spsr) { (void)spsr; return c->cpsr_ctrl; }

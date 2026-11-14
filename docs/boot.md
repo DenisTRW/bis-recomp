@@ -37,7 +37,21 @@ an ihre Adressen) und ruft danach dieselben Funktionen auf wie `Entry`.
 | 9 | Nullzeiger in `FS` | ROM-Archiv ohne Lese-Funktion: ROM-Header fehlte bei `0x027ffe00` | Firmware-Ersatz + Karten-Hardware (B7/B8) | ORIGINAL |
 | 10 | Warteschleife ohne Aufruf | wartet auf Uhr (Kanal 5) | Uhr-Ersatz, Interrupts auch bei Lesezugriffen | SIMULIERT |
 | 11 | `TP_WaitBusy` | Touch-Befehl unbeantwortet (Kanal 6) | Touch-Ersatz („kein Stylus“) | SIMULIERT |
-| 12 | **Aktueller Halt:** Nullzeiger `0x02019eac` | Speicherverwaltung des Spiels nicht eingerichtet | **offen** (Arena-Grenzen?) | – |
+| 12 | Nullzeiger nach `0x02019eac` (Heap) | **Recompiler-Fehler:** `MI_CpuFillFast` (`0x01ff8228`) springt per `sub pc, pc, r2` mitten in eine `str`-Reihe (Duff's Device). Das wurde als TODO übersprungen, dadurch immer 48 Bytes geschrieben und der Heap-Blockkopf zerstört | berechnete Sprünge auf `pc` → `switch`; Test `test_memfill` (hätte den Fehler gefunden: 118/129 falsch) | – |
+| 13 | Sprung ins Leere aus `0x01ff80a4` | `ldr pc, [r6, r3]`: Sprungtabelle innerhalb der Funktion (ITCM-Dekompression) | `ldr pc` → `switch` über alle Befehle der Funktion; `ldr pc, [sp], #4` = Rücksprung | – |
+| 14 | Sprung ins Leere aus `MI_CpuCopyFast` | Rest-Blöcke hinter der Funktion, einer davon mitten in `func_01ff82d8` | dsd-Funktion aufgeteilt (`MI_CpuCopyFast_Rest10`); Test `test_memcopy` | – |
+| 15 | Spielstand anlegen | Kartenbefehle 8/9 (programmieren/prüfen) | im ARM7-Ersatz | SIMULIERT |
+| – | **Stand:** Hauptschleife läuft 600 Frames | 949 Funktionen, 20 527 3D-Befehle, Anzeige A/B eingeschaltet, VRAM/Paletten/OAM gefüllt | **nächster Schritt: 2D-Renderer (zuerst als PNG)** | – |
+
+**Offene Auffälligkeit:** `0x0204536c`/`0x02045578` springen nach `0x02045500`/`0x020456f4`,
+mitten in Funktionen (gleiche Familie wie die 24 TODOs „Sprungziel `.L_02045174`“). Das ist bisher
+nicht tödlich, aber falsch, und gehört zur nächsten Recompiler-Runde.
+
+### Werkzeuge zur Fehlersuche (`boot_test.exe <extract> [frames] [budget] [funktion] [adresse:laenge]`)
+
+- `funktion` (hex): Argumente (r0–r3, lr) bei jedem Aufruf, dazu Vorgeschichte des ersten Aufrufs
+- `adresse:laenge` (hex): Watchpoint, protokolliert Schreibzugriffe mit der schreibenden Funktion
+- Bericht: Heap-0-Blockkette, Anzeige-Register, in Warteschleifen unterbrochene Funktionen
 
 Bis Hürde 6 laufen ~140 verschiedene Funktionen, darunter OS-, PXI-, RTC- und
 Interrupt-Initialisierung, Overlay 1 und schon die Tastenabfrage (`Pad_ReadAndUpdate`).

@@ -496,7 +496,12 @@ class Translator:
         if writes_pc:
             # Sprungtabelle:  addls pc, pc, rN, lsl #2
             if op == "add" and ops[1].strip() == "pc" and len(ops) == 4 and ops[3].replace(" ", "") == "lsl#0x2":
-                return self.jumptable(ops[2].strip(), insn)
+                try:
+                    return self.jumptable(ops[2].strip(), insn)
+                except Unsupported:
+                    pass   # ohne erkennbare Grenze: allgemeiner berechneter Sprung (unten)
+            if ops[1].strip() == "pc" and op in ("add", "sub"):
+                return self.computed_jump(f"({rn} {'+' if op == 'add' else '-'} {o2})", insn)
             raise Unsupported("Schreiben auf pc")
         rd = self.reg(rd_name, insn, read=False)
         if op in DP_LOGIC:
@@ -540,6 +545,23 @@ class Translator:
             cases.append(f"case {k}: goto I_{a:08x};")
         return f"switch ({r}) {{ {' '.join(cases)} }}"
 
+    def computed_jump(self, expr, insn, window=64, pre="", whole=False):
+        """Berechneter Sprung innerhalb der Funktion, z. B. Duff's Device in MI_CpuFillFast:
+        'sub pc, pc, r2' springt mitten in eine Reihe von str-Befehlen. Ziel ausrechnen und
+        per switch auf alle Befehle der nächsten `window` Plätze verteilen (whole=True:
+        alle Befehle der Funktion); alles andere geht als indirekter Sprung an die Laufzeit."""
+        if whole:
+            cands = [i.addr for i in self.f.insns]
+        else:
+            cands = [i.addr for i in self.f.insns if insn.addr <= i.addr <= insn.addr + 4 * window]
+        if not cands:
+            raise Unsupported("berechneter Sprung ohne Ziele")
+        for a in cands:
+            self.targets.add(a)
+        cases = " ".join(f"case 0x{a:08x}u: goto I_{a:08x};" for a in cands)
+        return (f"{{ uint32_t tgt = {expr}; {pre} switch (tgt) {{ {cases} "
+                f"default: rc_jump_indirect(c, tgt); return; }} }}")
+
     def loadstore(self, op, sz, ops, insn):
         rt_name = ops[0].strip()
         # Literal-Pool:  ldr rX, .L_xxx
@@ -572,7 +594,13 @@ class Translator:
             fn = {"": "rd32", "b": "rd8", "h": "rd16", "sb": "(uint32_t)(int8_t)rd8",
                   "sh": "(uint32_t)(int16_t)rd16", "t": "rd32", "bt": "rd8"}[sz]
             if REGS.get(rt_name) == 15:
-                return f"{{ uint32_t t = {fn}({addr});{wb} rc_jump_indirect(c, t); return; }}"
+                base_name = split_ops(mem.strip().lstrip("[").split("]")[0])[0].strip()
+                if base_name == "sp" and wb:
+                    # ldr pc, [sp], #4  = Rücksprung (gesichertes lr vom Stack)
+                    return f"{{ uint32_t t = {fn}({addr});{wb} (void)t; return; }}"
+                # Sprungtabelle innerhalb der Funktion (z. B. ITCM-Dekompression)
+                return self.computed_jump(f"{fn}({addr})", insn, window=len(self.f.insns),
+                                          pre=wb.strip() if wb else "", whole=True)
             rt = self.reg(rt_name, insn, read=False)
             return f"{{ uint32_t t = {fn}({addr});{wb} {rt} = t; }}"
         fn = {"": "wr32", "b": "wr8", "h": "wr16", "t": "wr32", "bt": "wr8"}[sz]

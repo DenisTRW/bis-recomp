@@ -60,8 +60,12 @@ Lege den ROM als `orig/baserom.nds` ab (wird von Git ignoriert).
       → [`docs/threads.md`](docs/threads.md) (Zweig `thread-model`)
 - [x] ARM7-Ersatz für Karte, Uhr, Touch; Karten-Hardware; Dateisystem und Overlay-Laden
       laufen → [`docs/arm7.md`](docs/arm7.md)
-- [ ] Speicherverwaltung des Spiels (aktueller Halt beim Start, `0x02019eac`)
+- [x] Speicherverwaltung: war ein Recompiler-Fehler in `MI_CpuFillFast` (berechnete Sprünge)
+- [x] **Hauptschleife läuft** (600 Frames, ~950 Funktionen, Anzeige an, VRAM gefüllt)
+- [ ] 2D-Renderer (BG-Ebenen, Sprites) – zuerst als PNG, dann SDL-Fenster → **erstes Bild**
+- [ ] 3D-Renderer (Anzeige A nutzt BG0 als 3D-Ebene)
 - [ ] ARM7-Ersatz für Sound (Kanal 7)
+- [ ] Sprünge mitten in Funktionen (`0x02045xxx`)
 
 ### Phase 3: Plattform-Schicht (SDL + OpenGL)
 

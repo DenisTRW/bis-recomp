@@ -339,6 +339,18 @@ static void poll_deliver(void) {
             !platform_inhibit_irq && (io[0x208] & 1) && !(cpu.cpsr_ctrl & 0x80)) poll_deliver(); \
     } while (0)
 
+/* Watchpoint (Fehlersuche): Schreibzugriffe auf [watch_lo, watch_hi) protokollieren */
+static uint32_t watch_lo, watch_hi;
+static uint32_t ctx_addr;   /* optional: Funktion, deren Vorgeschichte/Argumente gezeigt werden */
+static uint32_t ring_last(void);
+static const char *fn_name(uint32_t addr);
+static void watch(uint32_t a, uint32_t v, int size) {
+    static int shown;
+    if (a + (uint32_t)size <= watch_lo || a >= watch_hi || shown++ >= 40) return;
+    fprintf(stderr, "  [watch] wr%d %08x = %08x  in %s\n", size * 8, a, v, fn_name(ring_last()));
+}
+#define WATCH(a, v, s) do { if (watch_hi) watch(a, v, s); } while (0)
+
 uint8_t rd8(uint32_t a) {
     BUDGET(); POLL_IRQ();
     uint8_t *p = ptr(a); if (p) return *p;
@@ -362,19 +374,19 @@ uint32_t rd32(uint32_t a) {
     return ROR32(v, rot);
 }
 void wr8(uint32_t a, uint32_t v) {
-    BUDGET();
+    BUDGET(); WATCH(a, v, 1);
     uint8_t *p = ptr(a); if (p) { *p = (uint8_t)v; return; }
     if ((a >> 24) == 4) { io_write(a, v, 1); return; }
     unmapped("wr8", a);
 }
 void wr16(uint32_t a, uint32_t v) {
-    BUDGET(); a &= ~1u;
+    BUDGET(); a &= ~1u; WATCH(a, v, 2);
     uint8_t *p = ptr(a); if (p) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); return; }
     if ((a >> 24) == 4) { io_write(a, v, 2); return; }
     unmapped("wr16", a);
 }
 void wr32(uint32_t a, uint32_t v) {
-    BUDGET(); a &= ~3u;
+    BUDGET(); a &= ~3u; WATCH(a, v, 4);
     uint8_t *p = ptr(a);
     if (p) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24); return; }
     if ((a >> 24) == 4) { io_write(a, v, 4); return; }
@@ -444,6 +456,12 @@ void rc_enter(CPU *c, uint32_t addr) {
     }
     ring[ring_pos++ & 63] = addr;
     if (!in_irq) last_outside_irq = addr;
+    if (addr == ctx_addr) {
+        static int shown;
+        if (shown++ < 100000)
+            fprintf(stderr, "  [args] %08x(r0=%08x r1=%08x r2=%08x r3=%08x) lr=%08x\n",
+                    addr, c->r[0], c->r[1], c->r[2], c->r[3], c->r[14]);
+    }
     fn_entries++;
     FnInfo *f = find_fn(addr);
     if (f) {
@@ -722,8 +740,6 @@ static void load_overlays(const char *dir) {
 
 /* ================================================================ Bericht */
 
-static uint32_t ctx_addr;   /* optional: Funktion, deren Vorgeschichte gezeigt wird */
-
 static int cmp_calls(const void *a, const void *b) {
     const FnInfo *x = *(FnInfo *const *)a, *y = *(FnInfo *const *)b;
     return x->calls < y->calls ? 1 : x->calls > y->calls ? -1 : 0;
@@ -788,6 +804,32 @@ static void report(void) {
     for (int i = 0; i < TODO_MAX && todos[i].what; i++)
         printf("  %8llu  %s\n", (unsigned long long)todos[i].n, todos[i].what);
 
+    /* Spiel-Heap 0 (Tabelle 0x0205b7f0): Blockkette ab dem ersten Block.
+     * Block: +0 vorheriger, +4 nächster, +8 Größe (Bits 0-24) | frei (Bit 25) | Kennung (Bits 26-31) */
+    printf("\nSpiel-Heap 0 (erste Bloecke):\n");
+    {
+        uint32_t b = rd32(0x0205b7f0u);
+        for (int i = 0; i < 24 && b; i++) {
+            uint32_t w = rd32(b + 8);
+            printf("  %08x  vor %08x  nach %08x  groesse %07x  %s  kennung %u\n", b, rd32(b), rd32(b + 4),
+                   w & 0x1ffffff, (w >> 25) & 1 ? "frei " : "belegt", w >> 26);
+            b = rd32(b + 4);
+        }
+    }
+
+    /* Anzeige: Wie nah sind wir an einem Bild? */
+    printf("\nAnzeige-Register:\n");
+    printf("  DISPCNT A %08x  B %08x   POWCNT1 %04x   VRAMCNT A-D %02x %02x %02x %02x  E-I %02x %02x %02x %02x %02x\n",
+           io32(0x000), io32(0x1000), io16(0x304), io[0x240], io[0x241], io[0x242], io[0x243],
+           io[0x244], io[0x245], io[0x246], io[0x248], io[0x249]);
+    {
+        unsigned nz_pal = 0, nz_vram = 0, nz_oam = 0;
+        for (unsigned i = 0; i < sizeof pal; i++) nz_pal += pal[i] != 0;
+        for (unsigned i = 0; i < sizeof vram; i++) nz_vram += vram[i] != 0;
+        for (unsigned i = 0; i < sizeof oam; i++) nz_oam += oam[i] != 0;
+        printf("  Nicht-Null-Bytes: Paletten %u / %u, VRAM %u, OAM %u\n", nz_pal, (unsigned)sizeof pal, nz_vram, nz_oam);
+    }
+
     printf("\nIn Warteschleifen unterbrochen (zuletzt betretene Funktion):\n");
     for (int i = 0; i < 16 && poll_where[i].addr; i++)
         printf("  %8llu  0x%08x  %s\n", (unsigned long long)poll_where[i].n, poll_where[i].addr, fn_name(poll_where[i].addr));
@@ -824,6 +866,11 @@ int main(int argc, char **argv) {
     frame_limit = argc > 2 ? strtoull(argv[2], NULL, 0) : 600;
     mem_budget = (argc > 3 ? strtoull(argv[3], NULL, 0) : 2000) * 1000000ull;
     ctx_addr = argc > 4 ? (uint32_t)strtoul(argv[4], NULL, 16) : 0;
+    if (argc > 5) {   /* Watchpoint "adresse:laenge" (hex) */
+        char *colon;
+        watch_lo = (uint32_t)strtoul(argv[5], &colon, 16);
+        watch_hi = watch_lo + (*colon == ':' ? (uint32_t)strtoul(colon + 1, NULL, 16) : 4);
+    }
 
     /* Funktionstabelle sortieren */
     nfns = rc_functable_count;

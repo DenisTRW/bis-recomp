@@ -46,6 +46,7 @@ uint32_t arm7_recv_pop(void) {
 enum {
     CARD_REQ_INIT = 0, CARD_REQ_ACK, CARD_REQ_IDENTIFY, CARD_REQ_READ_ID, CARD_REQ_READ_ROM,
     CARD_REQ_WRITE_ROM, CARD_REQ_READ_BACKUP, CARD_REQ_WRITE_BACKUP,
+    CARD_REQ_PROGRAM_BACKUP, CARD_REQ_VERIFY_BACKUP,
 };
 
 static uint32_t card_cmd_buf;     /* Adresse des gemeinsamen Befehlspuffers */
@@ -135,12 +136,23 @@ static void card_command(uint32_t data) {
         card_finish(0);
         return;
     case CARD_REQ_WRITE_BACKUP:
+    case CARD_REQ_PROGRAM_BACKUP:
+        /* beobachtet (Befehl 8): Quelle = RAM, Ziel = Spielstand-Adresse */
         if (!backup_range_ok(dst, len)) { HLE(FEHLT, "ARM7 Karte: Spielstand schreiben ausserhalb des Speichers"); card_finish(0); return; }
         for (uint32_t i = 0; i < len; i++) backup[dst + i] = rd8(src + i);
         backup_dirty = 1;
-        HLE(SIMULIERT, "ARM7 Karte: Spielstand schreiben");
+        HLE(SIMULIERT, "ARM7 Karte: Spielstand schreiben/programmieren");
         card_finish(0);
         return;
+    case CARD_REQ_VERIFY_BACKUP: {
+        /* beobachtet (Befehl 9, direkt nach 8 mit gleichen Werten): vergleichen */
+        if (!backup_range_ok(dst, len)) { HLE(FEHLT, "ARM7 Karte: Spielstand pruefen ausserhalb des Speichers"); card_finish(0); return; }
+        int same = 1;
+        for (uint32_t i = 0; i < len && same; i++) same = backup[dst + i] == rd8(src + i);
+        HLE(SIMULIERT, "ARM7 Karte: Spielstand pruefen");
+        card_finish(same ? 0 : 1);   /* 1 = CARD_RESULT_FAILURE (angenommen) */
+        return;
+    }
     default: {
         static int shown;
         HLE(FEHLT, "ARM7 Karte: Befehl ohne Implementierung (Erfolg gemeldet)");
