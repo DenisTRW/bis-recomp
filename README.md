@@ -1,8 +1,8 @@
+# bis-recomp
+
 <p align="center">
   <img src="docs/logo.png" alt="Mario & Luigi BIS Recomp" width="460">
 </p>
-
-# bis-recomp
 
 > [!IMPORTANT]
 > **Built with AI:** The large majority of this project (recompiler, runtime, 2D/3D renderers,
