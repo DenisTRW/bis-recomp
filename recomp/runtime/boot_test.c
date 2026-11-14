@@ -259,10 +259,10 @@ static void dma_card(void) {
  * Streaming-Lader (0x0201c9ac) verlässt sich vermutlich darauf: Er wertet noch Reste im
  * Ringpuffer aus, während der nächste Block unterwegs ist. Kopieren wir sofort, werden
  * diese Reste überschrieben (Hänger nach "Neues Spiel", siehe docs/grafik.md).
- * EXPERIMENTELL: BIS_CARD_DELAY=n verzögert die Übertragung um n Speicherzugriffe. Seit den
- * internen DMA-Adresszählern läuft das mit n = 2048 stabil (siehe docs/grafik.md); der
- * Standard ist noch 0 = sofort. */
-static uint32_t card_countdown, card_delay = 0;
+ * BIS_CARD_DELAY=n verzögert die Übertragung um n Speicherzugriffe (Standard 2048, SIMULIERT:
+ * Speicherzugriffe statt Takt). 0 = sofort; damit liest der Karten-DMA den falschen Block
+ * (siehe docs/grafik.md). */
+static uint32_t card_countdown, card_delay = 2048;   /* BIS_CARD_DELAY=0: altes Sofort-Verhalten */
 static int card_fire_pending;
 static int dma_card_armed(void) {
     for (int ch = 0; ch < 4; ch++) {

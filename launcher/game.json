@@ -5,7 +5,7 @@
   "platform": "Nintendo DS",
   "region": "Europe",
   "accent": "#E5484D",
-  "status": "Work in progress – runs up to the file select screen, no sound yet",
+  "status": "Work in progress – new game plays the opening scene, no sound yet",
   "about": [
     "A role-playing adventure from the Mario & Luigi series, originally released for the Nintendo DS in 2009.",
     "Bowser accidentally swallows the Mario brothers. While he fights his way through the Mushroom Kingdom on the outside, Mario and Luigi explore his body from the inside, and both sides have to help each other. Battles are turn-based, but timed button presses decide how well attacks and defense work."

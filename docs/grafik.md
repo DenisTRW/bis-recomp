@@ -194,6 +194,19 @@ reproduzierbar.
     bei uns fehlen sie. Offene Frage, die sich am schnellsten mit einem Vergleich auf echter
     Hardware/Emulator klären lässt: Welchen Wert haben `[0x0212778c+0x68]` und
     `data_020564e0` beim Betreten von Toad Town?
+  - **GELÖST – Ursache des Schwarzbilds:** Vergleich mit DeSmuME als Messgerät
+    (`recomp/tools/desmume_probe.lua`): Im echten Spiel startet Skriptbefehl `0x14b`
+    (Tabellen-Eintrag 277 → `func_ov006_0211c43c`) den Fade (−16 → 0 über 60 Frames). Der
+    Skript-Dispatcher `func_ov006_021142bc` springt über eine Sprungtabelle in den Bereich
+    `0x02114964`–`0x02116334`; dsd hatte die Funktion aber nur mit `0x6a8` Byte angesetzt.
+    Der Bereich wurde nicht als Code disassembliert, alle Sprünge wurden `RC_TODO` – fast
+    alle Skriptbefehle liefen ins Leere. Fix: Größe in `config/eur/arm9/overlays/ov006/
+    symbols.txt` auf `0x2078` gesetzt, `dsd dis` neu. Nicht übersetzte Befehle: 959 → 545.
+  - Zusätzlich ist das genaue Karten-Timing jetzt **Standard** (`BIS_CARD_DELAY=2048`), weil
+    der Sofort-Modus beim Karten-DMA den falschen Block liest. Ergebnis: „Neues Spiel“ zeigt
+    die Eröffnung in Toad Town (Kamerafahrt, Toads, Brunnen). Neue Referenz-Prüfsummen
+    (3000 Frames): ohne Eingabe `5e5287bf5783d551`, Dateiauswahl (`1100:start,1400:a`)
+    `be2fdeed7eab0a31`, Neues Spiel (`…,1900:a,2200:a`, 3600 Frames) `d204bb10158efbe8`.
   - Neue Hilfen: `BIS_PROFILE_FROM=frame` (Zähler „Häufigste“ ab diesem Frame), der Bericht
     zeigt die zuletzt außerhalb von Interrupts betretene Funktion und deren letzte Lesezugriffe
     (findet Warteschleifen ohne Funktionsaufrufe).
@@ -216,7 +229,7 @@ und Vorgeschichte bzw. Schreibzugriffe mit Frame, `lr`, `sp` und Vorgeschichte. 
 | `BIS_NOBRIGHT=1` | Master-Helligkeit beim Zeichnen ignorieren (zeigt abgedunkelte Szenen) |
 | `BIS_SNDLOG=1` / `BIS_SND_STATUS=1` | Sound-Befehle protokollieren / Experiment: Spielerstatus pflegen |
 | `BIS_CARDLOG=1` | Karten-Befehle, DMA-Steuerung, Karten-DMA |
-| `BIS_CARD_DELAY=n` | experimentell: Karten-DMA erst nach n Speicherzugriffen |
+| `BIS_CARD_DELAY=n` | Karten-DMA nach n Speicherzugriffen (Standard 2048, 0 = sofort/alt) |
 
 Funktionsverfolgung mit mehreren Adressen: `boot_test.exe … 0 "0201c9ac,0203dd70"`.
 

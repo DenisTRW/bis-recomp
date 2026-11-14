@@ -16,8 +16,7 @@ card, the ARM7 co-processor, …).
 
 > **Status: early work in progress.** The game boots, shows the intro, the title screen and the
 > file select screen (fully rendered, including 3D), and reacts to keyboard input. Starting a new
-> game gets as far as loading the first scene (with the experimental accurate card timing), but
-> the screen stays black for now. There is no sound yet.
+> game plays the opening scene in Toad Town. There is no sound yet.
 
 **This repository contains no game data.** You need your own copy of the game.
 
@@ -56,7 +55,7 @@ card, the ARM7 co-processor, …).
 - **ROM check**: verifies your copy (SHA-1), copies it to where the port expects it and runs the
   one-time setup (extracting the game data).
 - **Settings** (gear icon, top left): window size, start in fullscreen, sharp or smooth pixels,
-  experimental accurate card timing, and launcher animations on/off. They are passed to the game as environment variables
+  card timing (now on by default), and launcher animations on/off. They are passed to the game as environment variables
   (`BIS_SCALE`, `BIS_FULLSCREEN`, `BIS_FILTER`, `BIS_CARD_DELAY`). Graphics enhancements, audio,
   controller support and the touch screen are listed as planned.
 - **Animations**: the window fades in and builds up step by step, smooth scrolling, sections
@@ -133,7 +132,7 @@ ARM7, graphics, recompiler and copy protection.
 - [x] 2D and 3D rendering, SDL window, keyboard input
 - [x] Title screen and file select screen
 - [x] Launcher
-- [ ] Start a new game (loading now works with accurate card timing; the first scene stays black)
+- [x] Start a new game (opening scene in Toad Town)
 - [ ] Touch screen via mouse, controller support
 - [ ] Sound
 - [ ] Remaining 3D features (shadows, fog, edge marking, anti-aliasing)

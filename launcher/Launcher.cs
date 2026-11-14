@@ -877,8 +877,8 @@ namespace RecompLauncher
             col.Children.Add(Section("Display", display));
 
             var exp = new StackPanel();
-            exp.Children.Add(SettingRow("Accurate card timing", "Lets game data arrive from the cartridge with a delay, like on the real console. Needed to get further after starting a new game. May still be unstable.",
-                Toggle("cardTiming", false)));
+            exp.Children.Add(SettingRow("Accurate card timing", "Lets game data arrive from the cartridge with a delay, like on the real console. On by default; turning it off brings back the old behaviour, where a new game stays black.",
+                Toggle("cardTiming", true)));
             col.Children.Add(Section("Experimental", exp));
 
             var later = new StackPanel();
@@ -1184,7 +1184,7 @@ namespace RecompLauncher
             psi.EnvironmentVariables["BIS_SCALE"] = Setting("scale", "2");
             psi.EnvironmentVariables["BIS_FULLSCREEN"] = Setting("fullscreen", "0");
             psi.EnvironmentVariables["BIS_FILTER"] = Setting("filter", "sharp");
-            if (Setting("cardTiming", "0") == "1") psi.EnvironmentVariables["BIS_CARD_DELAY"] = "2048";
+            psi.EnvironmentVariables["BIS_CARD_DELAY"] = Setting("cardTiming", "1") == "1" ? "2048" : "0";
 
             ShowStatus("Running " + game.Title + "…");
             progress.Visibility = Visibility.Collapsed;
