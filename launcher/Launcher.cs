@@ -1,8 +1,9 @@
-// Recomp Launcher - a small game launcher for recompiled PC ports.
+﻿// Launcher for the PC port of Mario & Luigi: Bowser's Inside Story.
 //
-// Games are described in games.json next to the executable (see README). For each game the
-// launcher checks the user's own ROM (SHA-1), copies it to where the port expects it, runs
-// optional one-time setup steps (e.g. extracting game data) and starts the game.
+// The game is described in game.json next to the executable (see README): ROM check (SHA-1),
+// one-time setup steps (extracting the game data), how to start the port, texts, controls and
+// the screenshot folder. Settings are stored per user and passed to the game as environment
+// variables (BIS_SCALE, BIS_FULLSCREEN, BIS_FILTER, BIS_CARD_DELAY).
 //
 // Built with the C# compiler that ships with Windows (.NET Framework 4.x, WPF), so no SDK is
 // required: see build.bat. C# 5 syntax only.
@@ -19,16 +20,20 @@ using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Markup;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
+using System.Windows.Media.Imaging;
 using System.Windows.Shell;
+using System.Windows.Threading;
 using Microsoft.Win32;
 
-[assembly: System.Reflection.AssemblyTitle("Recomp Launcher")]
-[assembly: System.Reflection.AssemblyProduct("Recomp Launcher")]
-[assembly: System.Reflection.AssemblyVersion("0.1.0.0")]
+[assembly: System.Reflection.AssemblyTitle("Bowser's Inside Story PC Launcher")]
+[assembly: System.Reflection.AssemblyProduct("bis-recomp")]
+[assembly: System.Reflection.AssemblyVersion("0.2.0.0")]
 
 namespace RecompLauncher
 {
@@ -41,7 +46,7 @@ namespace RecompLauncher
 
     class Game
     {
-        public string Id, Title, Subtitle, Platform, Region, Accent, Status, Description;
+        public string Id, Title, Subtitle, Platform, Region, Accent, Status, About, Port, Screenshots;
         public string RomLabel, RomSha1, RomFilter, RomTarget;
         public string LaunchExe, LaunchArgs, BuildHint;
         public List<SetupStep> Setup = new List<SetupStep>();
@@ -68,9 +73,18 @@ namespace RecompLauncher
             if (list != null) return list.ToArray();
             return v as object[] ?? new object[0];
         }
+        // Text fields may be a string or an array of paragraphs
+        public static string Text(Dictionary<string, object> d, string key)
+        {
+            object v;
+            if (d == null || !d.TryGetValue(key, out v) || v == null) return null;
+            var list = v as System.Collections.ArrayList;
+            if (list != null) return string.Join("\n\n", list.ToArray().Select(o => o.ToString()));
+            return v.ToString();
+        }
     }
 
-    // Per-user state: which ROM was verified for which game (so we do not hash 128 MB on every start)
+    // Per-user state: verified ROM, last session and the game settings
     class Settings
     {
         static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RecompLauncher");
@@ -98,6 +112,7 @@ namespace RecompLauncher
             catch (Exception) { }
         }
         public string Get(string key) { object v; return Data.TryGetValue(key, out v) && v != null ? v.ToString() : null; }
+        public string Get(string key, string def) { return Get(key) ?? def; }
         public void Set(string key, string value) { Data[key] = value; Save(); }
     }
 
@@ -105,17 +120,20 @@ namespace RecompLauncher
 
     static class Theme
     {
-        public static readonly Brush Background = Hex("#0E0F13");
-        public static readonly Brush Sidebar = Hex("#15171C");
-        public static readonly Brush Card = Hex("#1A1D23");
-        public static readonly Brush CardBorder = Hex("#262A32");
+        public static readonly Brush Background = Hex("#0D0E12");
+        public static readonly Brush Panel = Hex("#14161B");
+        public static readonly Brush CardBg = Hex("#181B21");
+        public static readonly Brush CardBorder = Hex("#252932");
+        public static readonly Brush Control = Hex("#22262E");
         public static readonly Brush Text = Hex("#ECEEF2");
-        public static readonly Brush TextDim = Hex("#9AA1AD");
-        public static readonly Brush TextFaint = Hex("#646B77");
+        public static readonly Brush TextDim = Hex("#A0A7B3");
+        public static readonly Brush TextFaint = Hex("#666D79");
         public static readonly Brush Good = Hex("#3DD68C");
         public static readonly Brush Warn = Hex("#F5B544");
         public static readonly Brush Bad = Hex("#F2555A");
         public static readonly FontFamily Font = new FontFamily("Segoe UI Variable Display, Segoe UI");
+        public static Color Accent = Color.FromRgb(0xE5, 0x48, 0x4D);
+        public static Brush AccentBrush = new SolidColorBrush(Accent);
 
         public static SolidColorBrush Hex(string hex)
         {
@@ -128,6 +146,10 @@ namespace RecompLauncher
             try { return (Color)ColorConverter.ConvertFromString(hex ?? fallback); }
             catch (Exception) { return (Color)ColorConverter.ConvertFromString(fallback); }
         }
+        public static Color Darken(Color c, double f)
+        {
+            return Color.FromRgb((byte)(c.R * (1 - f)), (byte)(c.G * (1 - f)), (byte)(c.B * (1 - f)));
+        }
 
         // Flat button with rounded corners and hover/press states
         const string ButtonTemplate =
@@ -137,18 +159,18 @@ namespace RecompLauncher
             " BorderThickness='{TemplateBinding BorderThickness}' CornerRadius='{TemplateBinding Tag}' Padding='{TemplateBinding Padding}'>" +
             "<ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/></Border>" +
             "<ControlTemplate.Triggers>" +
-            "<Trigger Property='IsMouseOver' Value='True'><Setter TargetName='b' Property='Opacity' Value='0.88'/></Trigger>" +
-            "<Trigger Property='IsPressed' Value='True'><Setter TargetName='b' Property='Opacity' Value='0.72'/></Trigger>" +
+            "<Trigger Property='IsMouseOver' Value='True'><Setter TargetName='b' Property='Opacity' Value='0.86'/></Trigger>" +
+            "<Trigger Property='IsPressed' Value='True'><Setter TargetName='b' Property='Opacity' Value='0.70'/></Trigger>" +
             "<Trigger Property='IsEnabled' Value='False'><Setter TargetName='b' Property='Opacity' Value='0.35'/></Trigger>" +
             "</ControlTemplate.Triggers></ControlTemplate>";
         static ControlTemplate buttonTemplate;
 
-        public static Button MakeButton(string text, Brush bg, Brush fg, double fontSize, Thickness padding, double radius)
+        public static Button MakeButton(object content, Brush bg, Brush fg, double fontSize, Thickness padding, double radius)
         {
             if (buttonTemplate == null) buttonTemplate = (ControlTemplate)XamlReader.Parse(ButtonTemplate);
-            var b = new Button
+            return new Button
             {
-                Content = text,
+                Content = content,
                 Background = bg,
                 Foreground = fg,
                 BorderThickness = new Thickness(0),
@@ -162,12 +184,43 @@ namespace RecompLauncher
                 Tag = new CornerRadius(radius),
                 Focusable = false
             };
-            return b;
+        }
+
+        // Toggle switch for CheckBox
+        const string ToggleTemplate =
+            "<ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' " +
+            " xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' TargetType='CheckBox'>" +
+            "<Border x:Name='track' Width='42' Height='24' CornerRadius='12' Background='#2C313B' Cursor='Hand'>" +
+            "<Ellipse x:Name='knob' Width='18' Height='18' Fill='#C9CED8' HorizontalAlignment='Left' Margin='3,0,0,0'/></Border>" +
+            "<ControlTemplate.Triggers>" +
+            "<Trigger Property='IsChecked' Value='True'><Setter TargetName='track' Property='Background' Value='{Binding Background, RelativeSource={RelativeSource TemplatedParent}}'/>" +
+            "<Setter TargetName='knob' Property='HorizontalAlignment' Value='Right'/><Setter TargetName='knob' Property='Margin' Value='0,0,3,0'/>" +
+            "<Setter TargetName='knob' Property='Fill' Value='White'/></Trigger>" +
+            "<Trigger Property='IsEnabled' Value='False'><Setter TargetName='track' Property='Opacity' Value='0.35'/></Trigger>" +
+            "</ControlTemplate.Triggers></ControlTemplate>";
+        static ControlTemplate toggleTemplate;
+
+        public static CheckBox MakeToggle(bool on)
+        {
+            if (toggleTemplate == null) toggleTemplate = (ControlTemplate)XamlReader.Parse(ToggleTemplate);
+            return new CheckBox { IsChecked = on, Template = toggleTemplate, Background = AccentBrush, Focusable = false, VerticalAlignment = VerticalAlignment.Center };
         }
 
         public static TextBlock Label(string text, double size, Brush fg, FontWeight weight)
         {
             return new TextBlock { Text = text, FontSize = size, Foreground = fg, FontWeight = weight, FontFamily = Font, TextWrapping = TextWrapping.Wrap };
+        }
+
+        public static Border Card(UIElement body)
+        {
+            return new Border { Background = CardBg, BorderBrush = CardBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(14), Padding = new Thickness(22, 18, 22, 20), Child = body };
+        }
+
+        public static TextBlock Heading(string text)
+        {
+            var t = Label(text.ToUpperInvariant(), 10.5, TextFaint, FontWeights.SemiBold);
+            t.Margin = new Thickness(0, 0, 0, 12);
+            return t;
         }
     }
 
@@ -176,275 +229,320 @@ namespace RecompLauncher
     class LauncherWindow : Window
     {
         readonly string baseDir;
-        readonly List<Game> games = new List<Game>();
         readonly Settings settings = Settings.Load();
-        Game current;
+        Game game;
         bool busy;
 
-        ListBox library;
-        Grid hero;
-        TextBlock heroTitle, heroSubtitle, heroPlatform, statusText, aboutText, romBadge, buildBadge, footer;
-        Border romBadgeBox, buildBadgeBox;
-        Button playButton, romButton, folderButton;
+        // header / tabs
+        Button tabOverview, tabSettings;
+        FrameworkElement overviewPage, settingsPage;
+        // play area
+        TextBlock statusText, romBadge, buildBadge;
+        Button playButton, romButton;
         ProgressBar progress;
-        StackPanel controlsPanel;
+        // gallery
+        List<string> shots = new List<string>();
+        int shotIndex;
+        Image shotImage;
+        StackPanel dots, thumbs;
+        Grid galleryEmpty;
+        Button prevButton, nextButton;
+        DispatcherTimer galleryTimer;
 
         public LauncherWindow(string baseDir)
         {
             this.baseDir = baseDir;
-            Title = "Recomp Launcher";
-            Width = 1060; Height = 700; MinWidth = 880; MinHeight = 600;
+            game = LoadGame();
+            Theme.Accent = Theme.ColorOf(game.Accent, "#E5484D");
+            Theme.AccentBrush = new SolidColorBrush(Theme.Accent);
+
+            Title = game.Title;
+            Width = 1180; Height = 760; MinWidth = 1000; MinHeight = 660;
             Background = Theme.Background;
             FontFamily = Theme.Font;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             WindowStyle = WindowStyle.None;
-            WindowChrome.SetWindowChrome(this, new WindowChrome { CaptionHeight = 44, ResizeBorderThickness = new Thickness(6), GlassFrameThickness = new Thickness(0), CornerRadius = new CornerRadius(0) });
+            WindowChrome.SetWindowChrome(this, new WindowChrome { CaptionHeight = 52, ResizeBorderThickness = new Thickness(6), GlassFrameThickness = new Thickness(0), CornerRadius = new CornerRadius(0) });
 
-            LoadGames();
             Content = BuildUi();
-            Loaded += delegate
+            LoadScreenshots();
+            ShowTab(false);
+            RefreshState();
+            PreviewKeyDown += (s, e) =>
             {
-                if (games.Count > 0) library.SelectedIndex = 0;
-                else ShowStatus("No games found. Add entries to games.json next to the launcher.", Theme.Warn);
+                if (overviewPage.Visibility != Visibility.Visible) return;
+                if (e.Key == Key.Left) { Step(-1); e.Handled = true; }
+                if (e.Key == Key.Right) { Step(1); e.Handled = true; }
             };
         }
 
-        // -------- games.json
+        // -------- game.json
 
-        void LoadGames()
+        Game LoadGame()
         {
-            string path = Path.Combine(baseDir, "games.json");
-            if (!File.Exists(path)) path = Path.Combine(baseDir, "launcher", "games.json");
-            if (!File.Exists(path)) return;
+            var g = new Game { Id = "game", Title = "Game", Platform = "" };
+            string path = new[] { "game.json", "launcher\\game.json" }.Select(p => Path.Combine(baseDir, p)).FirstOrDefault(File.Exists);
+            if (path == null)
+            {
+                MessageBox.Show("game.json was not found next to the launcher.", "Launcher", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return g;
+            }
             try
             {
-                var root = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(path));
-                foreach (var o in Json.Arr(root, "games"))
+                var d = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(path));
+                g.Id = Json.Str(d, "id") ?? "game";
+                g.Title = Json.Str(d, "title") ?? "Game";
+                g.Subtitle = Json.Str(d, "subtitle");
+                g.Platform = Json.Str(d, "platform");
+                g.Region = Json.Str(d, "region");
+                g.Accent = Json.Str(d, "accent");
+                g.Status = Json.Str(d, "status");
+                g.About = Json.Text(d, "about");
+                g.Port = Json.Text(d, "port");
+                g.Screenshots = Json.Str(d, "screenshots");
+                var rom = Json.Obj(d, "rom");
+                g.RomLabel = Json.Str(rom, "label");
+                g.RomSha1 = Json.Str(rom, "sha1");
+                g.RomFilter = Json.Str(rom, "filter") ?? "All files (*.*)|*.*";
+                g.RomTarget = Json.Str(rom, "target");
+                foreach (var s in Json.Arr(d, "setup"))
                 {
-                    var d = o as Dictionary<string, object>;
-                    if (d == null) continue;
-                    var g = new Game
-                    {
-                        Id = Json.Str(d, "id") ?? Guid.NewGuid().ToString("N"),
-                        Title = Json.Str(d, "title") ?? "Untitled",
-                        Subtitle = Json.Str(d, "subtitle"),
-                        Platform = Json.Str(d, "platform"),
-                        Region = Json.Str(d, "region"),
-                        Accent = Json.Str(d, "accent"),
-                        Status = Json.Str(d, "status"),
-                        Description = Json.Str(d, "description")
-                    };
-                    var rom = Json.Obj(d, "rom");
-                    g.RomLabel = Json.Str(rom, "label");
-                    g.RomSha1 = Json.Str(rom, "sha1");
-                    g.RomFilter = Json.Str(rom, "filter") ?? "All files (*.*)|*.*";
-                    g.RomTarget = Json.Str(rom, "target");
-                    foreach (var s in Json.Arr(d, "setup"))
-                    {
-                        var sd = s as Dictionary<string, object>;
-                        if (sd != null)
-                            g.Setup.Add(new SetupStep { Label = Json.Str(sd, "label"), Exe = Json.Str(sd, "exe"), Args = Json.Str(sd, "args"), SkipIfExists = Json.Str(sd, "skipIfExists") });
-                    }
-                    var launch = Json.Obj(d, "launch");
-                    g.LaunchExe = Json.Str(launch, "exe");
-                    g.LaunchArgs = Json.Str(launch, "args") ?? "";
-                    g.BuildHint = Json.Str(launch, "buildHint");
-                    foreach (var c in Json.Arr(d, "controls"))
-                    {
-                        var pair = c as System.Collections.ArrayList;
-                        var arr = pair != null ? pair.ToArray() : c as object[];
-                        if (arr != null && arr.Length >= 2) g.Controls.Add(new[] { arr[0].ToString(), arr[1].ToString() });
-                    }
-                    games.Add(g);
+                    var sd = s as Dictionary<string, object>;
+                    if (sd != null)
+                        g.Setup.Add(new SetupStep { Label = Json.Str(sd, "label"), Exe = Json.Str(sd, "exe"), Args = Json.Str(sd, "args"), SkipIfExists = Json.Str(sd, "skipIfExists") });
+                }
+                var launch = Json.Obj(d, "launch");
+                g.LaunchExe = Json.Str(launch, "exe");
+                g.LaunchArgs = Json.Str(launch, "args") ?? "";
+                g.BuildHint = Json.Str(launch, "buildHint");
+                foreach (var c in Json.Arr(d, "controls"))
+                {
+                    var pair = c as System.Collections.ArrayList;
+                    var arr = pair != null ? pair.ToArray() : c as object[];
+                    if (arr != null && arr.Length >= 2) g.Controls.Add(new[] { arr[0].ToString(), arr[1].ToString() });
                 }
             }
             catch (Exception e)
             {
-                MessageBox.Show("games.json could not be read:\n" + e.Message, "Recomp Launcher", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("game.json could not be read:\n" + e.Message, "Launcher", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
+            return g;
         }
 
         string Full(string relative) { return relative == null ? null : Path.GetFullPath(Path.Combine(baseDir, relative.Replace('/', Path.DirectorySeparatorChar))); }
-        string Expand(Game g, string s) { return (s ?? "").Replace("{rom}", Full(g.RomTarget) ?? "").Replace("{base}", baseDir.TrimEnd('\\')); }
+        string Expand(string s) { return (s ?? "").Replace("{rom}", Full(game.RomTarget) ?? "").Replace("{base}", baseDir.TrimEnd('\\')); }
 
         // -------- layout
 
         UIElement BuildUi()
         {
-            var root = new Grid();
-            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(288) });
-            root.ColumnDefinitions.Add(new ColumnDefinition());
+            var root = new Grid { Background = Theme.Background };
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(52) });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition());
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-            // Sidebar
-            var side = new Grid { Background = Theme.Sidebar };
-            side.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            side.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            side.RowDefinitions.Add(new RowDefinition());
-            side.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-            var brand = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(24, 22, 24, 26) };
-            var logo = new Border
+            // Soft accent glow behind the header
+            var glow = new Border
             {
-                Width = 30, Height = 30, CornerRadius = new CornerRadius(8),
-                Background = new LinearGradientBrush(Color.FromRgb(0x7C, 0x5C, 0xFF), Color.FromRgb(0xE5, 0x48, 0x4D), 45),
-                Child = new TextBlock { Text = "R", Foreground = Brushes.White, FontWeight = FontWeights.Bold, FontSize = 16, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }
+                IsHitTestVisible = false,
+                Background = new RadialGradientBrush(Color.FromArgb(0x38, Theme.Accent.R, Theme.Accent.G, Theme.Accent.B), Colors.Transparent)
+                {
+                    Center = new Point(0.12, 0), GradientOrigin = new Point(0.12, 0), RadiusX = 0.7, RadiusY = 1.4
+                }
             };
-            brand.Children.Add(logo);
-            var brandText = new StackPanel { Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-            brandText.Children.Add(Theme.Label("Recomp", 15, Theme.Text, FontWeights.Bold));
-            brandText.Children.Add(Theme.Label("LAUNCHER", 9.5, Theme.TextFaint, FontWeights.SemiBold));
-            brand.Children.Add(brandText);
-            WindowChrome.SetIsHitTestVisibleInChrome(brand, false);
-            Grid.SetRow(brand, 0);
-            side.Children.Add(brand);
+            Grid.SetRowSpan(glow, 2);
+            root.Children.Add(glow);
 
-            var libHeader = Theme.Label("LIBRARY", 10.5, Theme.TextFaint, FontWeights.SemiBold);
-            libHeader.Margin = new Thickness(26, 0, 24, 8);
-            Grid.SetRow(libHeader, 1);
-            side.Children.Add(libHeader);
+            root.Children.Add(BuildTitleBar());
 
-            library = new ListBox
-            {
-                Background = Brushes.Transparent, BorderThickness = new Thickness(0),
-                Margin = new Thickness(12, 0, 12, 0), Padding = new Thickness(0),
-                ItemContainerStyle = LibraryItemStyle()
-            };
-            ScrollViewer.SetHorizontalScrollBarVisibility(library, ScrollBarVisibility.Disabled);
-            foreach (var g in games) library.Items.Add(LibraryItem(g));
-            library.SelectionChanged += delegate { if (library.SelectedIndex >= 0) Select(games[library.SelectedIndex]); };
-            Grid.SetRow(library, 2);
-            side.Children.Add(library);
+            var header = BuildHeader();
+            Grid.SetRow(header, 1);
+            root.Children.Add(header);
 
-            var hint = Theme.Label("Add more games in games.json", 11, Theme.TextFaint, FontWeights.Normal);
-            hint.Margin = new Thickness(26, 12, 24, 20);
-            Grid.SetRow(hint, 3);
-            side.Children.Add(hint);
-            Grid.SetColumn(side, 0);
-            root.Children.Add(side);
+            overviewPage = BuildOverview();
+            settingsPage = BuildSettings();
+            Grid.SetRow(overviewPage, 2);
+            Grid.SetRow(settingsPage, 2);
+            root.Children.Add(overviewPage);
+            root.Children.Add(settingsPage);
 
-            // Main area
-            var main = new Grid();
-            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(44) });
-            main.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            main.RowDefinitions.Add(new RowDefinition());
-            main.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            Grid.SetColumn(main, 1);
-            root.Children.Add(main);
-
-            var caption = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-            caption.Children.Add(CaptionButton("", delegate { WindowState = WindowState.Minimized; }, false));
-            caption.Children.Add(CaptionButton("", delegate { WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized; }, false));
-            caption.Children.Add(CaptionButton("", delegate { Close(); }, true));
-            Grid.SetRow(caption, 0);
-            main.Children.Add(caption);
-
-            hero = BuildHero();
-            Grid.SetRow(hero, 1);
-            main.Children.Add(hero);
-
-            var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Hidden, Margin = new Thickness(36, 22, 36, 0) };   // scrolls with the mouse wheel
-            var cards = new Grid();
-            cards.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
-            cards.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18) });
-            cards.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
-            aboutText = Theme.Label("", 13.5, Theme.TextDim, FontWeights.Normal);
-            aboutText.LineHeight = 21;
-            var about = CardWith("About", aboutText);
-            Grid.SetColumn(about, 0);
-            cards.Children.Add(about);
-            controlsPanel = new StackPanel();
-            var controls = CardWith("Controls", controlsPanel);
-            Grid.SetColumn(controls, 2);
-            cards.Children.Add(controls);
-            scroll.Content = cards;
-            Grid.SetRow(scroll, 2);
-            main.Children.Add(scroll);
-
-            var bottom = new Grid { Margin = new Thickness(36, 14, 36, 18) };
-            bottom.ColumnDefinitions.Add(new ColumnDefinition());
-            bottom.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var statusRow = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            progress = new ProgressBar { Width = 120, Height = 4, IsIndeterminate = true, Visibility = Visibility.Collapsed, Margin = new Thickness(0, 0, 12, 0), Foreground = Theme.Text, Background = Theme.CardBorder, BorderThickness = new Thickness(0) };
-            statusRow.Children.Add(progress);
-            statusText = Theme.Label("", 12.5, Theme.TextDim, FontWeights.Normal);
-            statusText.TextWrapping = TextWrapping.NoWrap;
-            statusText.TextTrimming = TextTrimming.CharacterEllipsis;
-            statusRow.Children.Add(statusText);
-            bottom.Children.Add(statusRow);
-            footer = Theme.Label("No game data is included. Use your own legally obtained copy.", 11, Theme.TextFaint, FontWeights.Normal);
-            footer.TextWrapping = TextWrapping.NoWrap;
-            footer.VerticalAlignment = VerticalAlignment.Center;
-            Grid.SetColumn(footer, 1);
-            bottom.Children.Add(footer);
-            Grid.SetRow(bottom, 3);
-            main.Children.Add(bottom);
-
+            var footer = new Grid { Margin = new Thickness(40, 10, 40, 16) };
+            footer.ColumnDefinitions.Add(new ColumnDefinition());
+            footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var note = Theme.Label("Fan-made port. No game data is included – use your own legally obtained copy. Not affiliated with Nintendo.", 11, Theme.TextFaint, FontWeights.Normal);
+            footer.Children.Add(note);
+            var link = Theme.MakeButton("github.com/DenisTRW/bis-recomp", Brushes.Transparent, Theme.TextFaint, 11, new Thickness(0), 0);
+            link.FontWeight = FontWeights.Normal;
+            link.Click += delegate { OpenUrl("https://github.com/DenisTRW/bis-recomp"); };
+            Grid.SetColumn(link, 1);
+            footer.Children.Add(link);
+            Grid.SetRow(footer, 3);
+            root.Children.Add(footer);
             return root;
         }
 
-        Grid BuildHero()
+        UIElement BuildTitleBar()
         {
-            var g = new Grid { Margin = new Thickness(36, 6, 36, 0), Height = 236 };
-            var banner = new Border { CornerRadius = new CornerRadius(16), ClipToBounds = true };
-            g.Children.Add(banner);
-            // Soft glow circles for some depth
-            var glow = new Canvas { IsHitTestVisible = false, ClipToBounds = true };
-            g.Children.Add(new Border { CornerRadius = new CornerRadius(16), ClipToBounds = true, Child = glow });
+            var bar = new Grid();
+            var left = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(40, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+            var dot = new Border { Width = 10, Height = 10, CornerRadius = new CornerRadius(5), Background = Theme.AccentBrush, VerticalAlignment = VerticalAlignment.Center };
+            left.Children.Add(dot);
+            var t = Theme.Label("PC PORT  ·  LAUNCHER", 10.5, Theme.TextFaint, FontWeights.SemiBold);
+            t.Margin = new Thickness(10, 0, 0, 0);
+            left.Children.Add(t);
+            bar.Children.Add(left);
 
-            var content = new Grid { Margin = new Thickness(34, 28, 34, 28) };
-            content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            content.RowDefinitions.Add(new RowDefinition());
-            content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var caption = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
+            caption.Children.Add(CaptionButton("", delegate { WindowState = WindowState.Minimized; }, false));
+            caption.Children.Add(CaptionButton("", delegate { WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized; }, false));
+            caption.Children.Add(CaptionButton("", delegate { Close(); }, true));
+            bar.Children.Add(caption);
+            return bar;
+        }
 
-            var chip = new Border { Background = new SolidColorBrush(Color.FromArgb(0x40, 0, 0, 0)), CornerRadius = new CornerRadius(6), Padding = new Thickness(9, 3, 9, 4), HorizontalAlignment = HorizontalAlignment.Left };
-            heroPlatform = Theme.Label("", 11, Brushes.White, FontWeights.SemiBold);
-            chip.Child = heroPlatform;
-            content.Children.Add(chip);
+        UIElement BuildHeader()
+        {
+            var g = new Grid { Margin = new Thickness(40, 6, 40, 18) };
+            g.ColumnDefinitions.Add(new ColumnDefinition());
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            heroTitle = Theme.Label("", 30, Brushes.White, FontWeights.Bold);
-            heroTitle.Margin = new Thickness(0, 14, 0, 0);
-            heroTitle.Effect = new DropShadowEffect { BlurRadius = 18, ShadowDepth = 0, Opacity = 0.35 };
-            Grid.SetRow(heroTitle, 1);
-            content.Children.Add(heroTitle);
+            var titles = new StackPanel();
+            var chip = new Border { Background = new SolidColorBrush(Color.FromArgb(0x30, Theme.Accent.R, Theme.Accent.G, Theme.Accent.B)), CornerRadius = new CornerRadius(6), Padding = new Thickness(9, 3, 9, 4), HorizontalAlignment = HorizontalAlignment.Left };
+            chip.Child = Theme.Label(((game.Platform ?? "") + (game.Region != null ? "  ·  " + game.Region : "")).ToUpperInvariant(), 10.5, Theme.Text, FontWeights.SemiBold);
+            titles.Children.Add(chip);
+            var title = Theme.Label(game.Title, 32, Theme.Text, FontWeights.Bold);
+            title.Margin = new Thickness(0, 12, 0, 0);
+            titles.Children.Add(title);
+            if (game.Subtitle != null)
+            {
+                var sub = Theme.Label(game.Subtitle, 14, Theme.TextDim, FontWeights.Normal);
+                sub.Margin = new Thickness(0, 4, 0, 0);
+                titles.Children.Add(sub);
+            }
+            g.Children.Add(titles);
 
-            heroSubtitle = Theme.Label("", 14, new SolidColorBrush(Color.FromArgb(0xD0, 0xFF, 0xFF, 0xFF)), FontWeights.Normal);
-            heroSubtitle.Margin = new Thickness(0, 4, 0, 0);
-            Grid.SetRow(heroSubtitle, 2);
-            content.Children.Add(heroSubtitle);
+            // Tabs
+            var tabs = new Border { Background = Theme.Panel, BorderBrush = Theme.CardBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Padding = new Thickness(4), VerticalAlignment = VerticalAlignment.Bottom };
+            var tabRow = new StackPanel { Orientation = Orientation.Horizontal };
+            tabOverview = Theme.MakeButton("Overview", Brushes.Transparent, Theme.TextDim, 13, new Thickness(20, 8, 20, 9), 9);
+            tabSettings = Theme.MakeButton("Settings", Brushes.Transparent, Theme.TextDim, 13, new Thickness(20, 8, 20, 9), 9);
+            tabOverview.Click += delegate { ShowTab(false); };
+            tabSettings.Click += delegate { ShowTab(true); };
+            tabRow.Children.Add(tabOverview);
+            tabRow.Children.Add(tabSettings);
+            tabs.Child = tabRow;
+            WindowChrome.SetIsHitTestVisibleInChrome(tabs, true);
+            Grid.SetColumn(tabs, 1);
+            g.Children.Add(tabs);
+            return g;
+        }
 
-            var actions = new Grid();
-            actions.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            actions.ColumnDefinitions.Add(new ColumnDefinition());
-            playButton = Theme.MakeButton("▶  PLAY", Brushes.White, Brushes.Black, 15, new Thickness(34, 12, 34, 12), 10);
+        void ShowTab(bool settingsTab)
+        {
+            overviewPage.Visibility = settingsTab ? Visibility.Collapsed : Visibility.Visible;
+            settingsPage.Visibility = settingsTab ? Visibility.Visible : Visibility.Collapsed;
+            tabOverview.Background = settingsTab ? Brushes.Transparent : Theme.Control;
+            tabOverview.Foreground = settingsTab ? Theme.TextDim : Theme.Text;
+            tabSettings.Background = settingsTab ? Theme.Control : Brushes.Transparent;
+            tabSettings.Foreground = settingsTab ? Theme.Text : Theme.TextDim;
+            var page = settingsTab ? settingsPage : overviewPage;
+            page.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180)));
+        }
+
+        // -------- overview
+
+        FrameworkElement BuildOverview()
+        {
+            var g = new Grid { Margin = new Thickness(40, 0, 40, 0) };
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(400) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
+            g.ColumnDefinitions.Add(new ColumnDefinition());
+
+            g.Children.Add(BuildGallery());
+
+            var right = new Grid();
+            right.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            right.RowDefinitions.Add(new RowDefinition());
+            Grid.SetColumn(right, 2);
+            g.Children.Add(right);
+
+            right.Children.Add(BuildPlayCard());
+
+            var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Hidden, Margin = new Thickness(0, 16, 0, 0), Padding = new Thickness(0, 0, 6, 0) };
+            var info = new StackPanel();
+            info.Children.Add(InfoCard("About the game", game.About));
+            info.Children.Add(Spacer(14));
+            info.Children.Add(PortCard());
+            info.Children.Add(Spacer(14));
+            info.Children.Add(ControlsCard());
+            info.Children.Add(Spacer(6));
+            scroll.Content = info;
+            Grid.SetRow(scroll, 1);
+            right.Children.Add(scroll);
+            return g;
+        }
+
+        static FrameworkElement Spacer(double h) { return new Border { Height = h }; }
+
+        UIElement BuildPlayCard()
+        {
+            var accent = Theme.Accent;
+            var card = new Border
+            {
+                CornerRadius = new CornerRadius(16),
+                Padding = new Thickness(24, 20, 24, 20),
+                Background = new LinearGradientBrush(new GradientStopCollection
+                {
+                    new GradientStop(accent, 0), new GradientStop(Theme.Darken(accent, 0.5), 0.7), new GradientStop(Theme.Darken(accent, 0.72), 1)
+                }, new Point(0, 0), new Point(1, 1))
+            };
+            var g = new Grid();
+            g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            g.ColumnDefinitions.Add(new ColumnDefinition());
+
+            var playContent = new StackPanel { Orientation = Orientation.Horizontal };
+            playContent.Children.Add(new TextBlock { Text = "", FontFamily = new FontFamily("Segoe MDL2 Assets, Segoe Fluent Icons"), FontSize = 16, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 1, 12, 0) });
+            playContent.Children.Add(new TextBlock { Text = "LAUNCH GAME", FontSize = 16, FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center });
+            playButton = Theme.MakeButton(playContent, Brushes.White, Brushes.Black, 16, new Thickness(34, 14, 36, 14), 12);
+            playButton.Effect = new DropShadowEffect { BlurRadius = 24, ShadowDepth = 4, Opacity = 0.35 };
             playButton.Click += delegate { Play(); };
-            var buttons = new StackPanel { Orientation = Orientation.Horizontal };
-            buttons.Children.Add(playButton);
-            romButton = Theme.MakeButton("Select ROM…", new SolidColorBrush(Color.FromArgb(0x3A, 0, 0, 0)), Brushes.White, 13, new Thickness(18, 12, 18, 12), 10);
-            romButton.Margin = new Thickness(10, 0, 0, 0);
+            g.Children.Add(playButton);
+
+            var side = new StackPanel { Margin = new Thickness(18, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+            var badges = new StackPanel { Orientation = Orientation.Horizontal };
+            badges.Children.Add(Badge(out romBadge));
+            var bb = Badge(out buildBadge);
+            bb.Margin = new Thickness(8, 0, 0, 0);
+            badges.Children.Add(bb);
+            side.Children.Add(badges);
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
+            romButton = Theme.MakeButton("Select ROM…", new SolidColorBrush(Color.FromArgb(0x40, 0, 0, 0)), Brushes.White, 12.5, new Thickness(14, 7, 14, 8), 8);
             romButton.Click += delegate { SelectRom(); };
             buttons.Children.Add(romButton);
-            folderButton = Theme.MakeButton("Open folder", new SolidColorBrush(Color.FromArgb(0x3A, 0, 0, 0)), Brushes.White, 13, new Thickness(18, 12, 18, 12), 10);
-            folderButton.Margin = new Thickness(10, 0, 0, 0);
-            folderButton.Click += delegate { Process.Start("explorer.exe", "\"" + baseDir + "\""); };
-            buttons.Children.Add(folderButton);
-            actions.Children.Add(buttons);
+            var folder = Theme.MakeButton("Open folder", new SolidColorBrush(Color.FromArgb(0x40, 0, 0, 0)), Brushes.White, 12.5, new Thickness(14, 7, 14, 8), 8);
+            folder.Margin = new Thickness(8, 0, 0, 0);
+            folder.Click += delegate { Process.Start("explorer.exe", "\"" + baseDir + "\""); };
+            buttons.Children.Add(folder);
+            side.Children.Add(buttons);
+            Grid.SetColumn(side, 1);
+            g.Children.Add(side);
 
-            var badges = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
-            romBadgeBox = Badge(out romBadge);
-            buildBadgeBox = Badge(out buildBadge);
-            buildBadgeBox.Margin = new Thickness(8, 0, 0, 0);
-            badges.Children.Add(romBadgeBox);
-            badges.Children.Add(buildBadgeBox);
-            Grid.SetColumn(badges, 1);
-            actions.Children.Add(badges);
-            Grid.SetRow(actions, 4);
-            content.Children.Add(actions);
+            var statusRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(2, 16, 0, 0) };
+            progress = new ProgressBar { Width = 90, Height = 4, IsIndeterminate = true, Visibility = Visibility.Collapsed, Margin = new Thickness(0, 0, 10, 0), Foreground = Brushes.White, Background = new SolidColorBrush(Color.FromArgb(0x40, 0, 0, 0)), BorderThickness = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
+            statusRow.Children.Add(progress);
+            statusText = Theme.Label("", 12.5, new SolidColorBrush(Color.FromArgb(0xE0, 0xFF, 0xFF, 0xFF)), FontWeights.Normal);
+            statusText.TextWrapping = TextWrapping.NoWrap;
+            statusText.TextTrimming = TextTrimming.CharacterEllipsis;
+            statusRow.Children.Add(statusText);
+            Grid.SetRow(statusRow, 1);
+            Grid.SetColumnSpan(statusRow, 2);
+            g.Children.Add(statusRow);
 
-            g.Children.Add(content);
-            g.Tag = new object[] { banner, glow };
-            return g;
+            card.Child = g;
+            return card;
         }
 
         Border Badge(out TextBlock text)
@@ -453,14 +551,360 @@ namespace RecompLauncher
             return new Border { Background = new SolidColorBrush(Color.FromArgb(0x48, 0, 0, 0)), CornerRadius = new CornerRadius(14), Padding = new Thickness(11, 5, 12, 6), Child = text };
         }
 
-        Border CardWith(string title, UIElement body)
+        UIElement InfoCard(string title, string body)
         {
-            var panel = new StackPanel();
-            var t = Theme.Label(title.ToUpperInvariant(), 10.5, Theme.TextFaint, FontWeights.SemiBold);
-            t.Margin = new Thickness(0, 0, 0, 12);
-            panel.Children.Add(t);
-            panel.Children.Add(body);
-            return new Border { Background = Theme.Card, BorderBrush = Theme.CardBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(14), Padding = new Thickness(22, 18, 22, 20), Child = panel, Margin = new Thickness(0, 0, 0, 16) };
+            var p = new StackPanel();
+            p.Children.Add(Theme.Heading(title));
+            AddParagraphs(p, body ?? "");
+            return Theme.Card(p);
+        }
+
+        static void AddParagraphs(Panel p, string body)
+        {
+            var paras = body.Split(new[] { "\n\n" }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < paras.Length; i++)
+            {
+                var t = Theme.Label(paras[i].Trim(), 13.5, Theme.TextDim, FontWeights.Normal);
+                t.LineHeight = 21;
+                if (i > 0) t.Margin = new Thickness(0, 10, 0, 0);
+                p.Children.Add(t);
+            }
+        }
+
+        UIElement PortCard()
+        {
+            var p = new StackPanel();
+            p.Children.Add(Theme.Heading("About this port"));
+            if (!string.IsNullOrEmpty(game.Status))
+            {
+                var st = new Border { Background = new SolidColorBrush(Color.FromArgb(0x26, 0xF5, 0xB5, 0x44)), BorderBrush = new SolidColorBrush(Color.FromArgb(0x50, 0xF5, 0xB5, 0x44)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 8, 12, 9), Margin = new Thickness(0, 0, 0, 12) };
+                st.Child = Theme.Label(game.Status, 12.5, Theme.Warn, FontWeights.SemiBold);
+                p.Children.Add(st);
+            }
+            AddParagraphs(p, game.Port ?? "");
+            if (game.RomLabel != null)
+            {
+                var v = new TextBlock { FontFamily = Theme.Font, FontSize = 12.5, Margin = new Thickness(0, 12, 0, 0), TextWrapping = TextWrapping.Wrap };
+                v.Inlines.Add(new Run("Supported version: ") { Foreground = Theme.TextFaint });
+                v.Inlines.Add(new Run(game.RomLabel) { Foreground = Theme.Text });
+                p.Children.Add(v);
+            }
+            return Theme.Card(p);
+        }
+
+        UIElement ControlsCard()
+        {
+            var p = new StackPanel();
+            p.Children.Add(Theme.Heading("Controls"));
+            var grid = new UniformGrid { Columns = 2 };
+            foreach (var c in game.Controls)
+            {
+                var row = new Grid { Margin = new Thickness(0, 0, 12, 8) };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(104) });
+                row.ColumnDefinitions.Add(new ColumnDefinition());
+                var key = new Border { Background = Theme.Control, BorderBrush = Theme.CardBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 2, 8, 3), HorizontalAlignment = HorizontalAlignment.Left, Child = Theme.Label(c[0], 12, Theme.Text, FontWeights.SemiBold) };
+                row.Children.Add(key);
+                var action = Theme.Label(c[1], 12.5, Theme.TextDim, FontWeights.Normal);
+                action.VerticalAlignment = VerticalAlignment.Center;
+                Grid.SetColumn(action, 1);
+                row.Children.Add(action);
+                grid.Children.Add(row);
+            }
+            p.Children.Add(grid);
+            return Theme.Card(p);
+        }
+
+        // -------- gallery
+
+        UIElement BuildGallery()
+        {
+            var g = new Grid();
+            g.RowDefinitions.Add(new RowDefinition());
+            g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            var frame = new Border { Background = Hexa("#0A0B0E"), BorderBrush = Theme.CardBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(16), ClipToBounds = true };
+            var stage = new Grid();
+            shotImage = new Image { Stretch = Stretch.Uniform, Margin = new Thickness(18) };
+            RenderOptions.SetBitmapScalingMode(shotImage, BitmapScalingMode.NearestNeighbor);
+            stage.Children.Add(shotImage);
+
+            galleryEmpty = new Grid { Visibility = Visibility.Collapsed };
+            var emptyText = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(36) };
+            var icon = new TextBlock { Text = "", FontFamily = new FontFamily("Segoe MDL2 Assets, Segoe Fluent Icons"), FontSize = 34, Foreground = Theme.TextFaint, HorizontalAlignment = HorizontalAlignment.Center };
+            emptyText.Children.Add(icon);
+            var et = Theme.Label("No screenshots yet", 15, Theme.Text, FontWeights.SemiBold);
+            et.HorizontalAlignment = HorizontalAlignment.Center;
+            et.Margin = new Thickness(0, 12, 0, 6);
+            emptyText.Children.Add(et);
+            var ed = Theme.Label("Put PNG or JPG images into the screenshots folder. They are created from your own copy of the game and stay on your PC.", 12.5, Theme.TextDim, FontWeights.Normal);
+            ed.TextAlignment = TextAlignment.Center;
+            emptyText.Children.Add(ed);
+            var open = Theme.MakeButton("Open screenshots folder", Theme.Control, Theme.Text, 12.5, new Thickness(14, 7, 14, 8), 8);
+            open.Margin = new Thickness(0, 14, 0, 0);
+            open.HorizontalAlignment = HorizontalAlignment.Center;
+            open.Click += delegate
+            {
+                string dir = Full(game.Screenshots ?? "screenshots");
+                Directory.CreateDirectory(dir);
+                Process.Start("explorer.exe", "\"" + dir + "\"");
+            };
+            emptyText.Children.Add(open);
+            galleryEmpty.Children.Add(emptyText);
+            stage.Children.Add(galleryEmpty);
+
+            prevButton = ArrowButton("", HorizontalAlignment.Left);
+            prevButton.Click += delegate { Step(-1); };
+            nextButton = ArrowButton("", HorizontalAlignment.Right);
+            nextButton.Click += delegate { Step(1); };
+            stage.Children.Add(prevButton);
+            stage.Children.Add(nextButton);
+            stage.MouseWheel += (s, e) => Step(e.Delta > 0 ? -1 : 1);
+            frame.Child = stage;
+            g.Children.Add(frame);
+
+            dots = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 12, 0, 0) };
+            Grid.SetRow(dots, 1);
+            g.Children.Add(dots);
+
+            var thumbScroll = new ScrollViewer { HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, Margin = new Thickness(0, 10, 0, 0) };
+            thumbs = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+            thumbScroll.Content = thumbs;
+            Grid.SetRow(thumbScroll, 2);
+            g.Children.Add(thumbScroll);
+
+            galleryTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
+            galleryTimer.Tick += delegate { if (IsActive && shots.Count > 1) Show(shotIndex + 1, false); };
+            return g;
+        }
+
+        static Brush Hexa(string hex) { return Theme.Hex(hex); }
+
+        Button ArrowButton(string glyph, HorizontalAlignment side)
+        {
+            var b = Theme.MakeButton(glyph, new SolidColorBrush(Color.FromArgb(0x90, 0x14, 0x16, 0x1B)), Theme.Text, 13, new Thickness(0), 18);
+            b.FontFamily = new FontFamily("Segoe MDL2 Assets, Segoe Fluent Icons");
+            b.Width = 36; b.Height = 36;
+            b.HorizontalAlignment = side;
+            b.VerticalAlignment = VerticalAlignment.Center;
+            b.Margin = new Thickness(10);
+            return b;
+        }
+
+        void LoadScreenshots()
+        {
+            shots.Clear();
+            string dir = Full(game.Screenshots ?? "screenshots");
+            if (Directory.Exists(dir))
+                shots = Directory.GetFiles(dir)
+                    .Where(f => new[] { ".png", ".jpg", ".jpeg" }.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                    .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
+
+            thumbs.Children.Clear();
+            dots.Children.Clear();
+            bool any = shots.Count > 0;
+            galleryEmpty.Visibility = any ? Visibility.Collapsed : Visibility.Visible;
+            shotImage.Visibility = any ? Visibility.Visible : Visibility.Collapsed;
+            prevButton.Visibility = nextButton.Visibility = shots.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+            for (int i = 0; i < shots.Count; i++)
+            {
+                int k = i;
+                var img = new Image { Source = LoadBitmap(shots[i], 64), Stretch = Stretch.UniformToFill, Width = 52, Height = 52 };
+                RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.HighQuality);
+                var t = new Border { Width = 56, Height = 56, CornerRadius = new CornerRadius(9), BorderThickness = new Thickness(2), BorderBrush = Brushes.Transparent, Margin = new Thickness(4, 0, 4, 0), Cursor = Cursors.Hand, ClipToBounds = true, Child = img, Background = Theme.Panel };
+                t.MouseLeftButtonUp += delegate { Show(k, true); };
+                thumbs.Children.Add(t);
+                dots.Children.Add(new Border { Width = 6, Height = 6, CornerRadius = new CornerRadius(3), Margin = new Thickness(3, 0, 3, 0), Background = Theme.TextFaint });
+            }
+            if (any) Show(0, false);
+            if (shots.Count > 1) galleryTimer.Start(); else galleryTimer.Stop();
+        }
+
+        static BitmapImage LoadBitmap(string path, int decodeHeight)
+        {
+            try
+            {
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad;   // do not keep the file locked
+                bmp.UriSource = new Uri(path);
+                if (decodeHeight > 0) bmp.DecodePixelHeight = decodeHeight;
+                bmp.EndInit();
+                bmp.Freeze();
+                return bmp;
+            }
+            catch (Exception) { return null; }
+        }
+
+        void Step(int delta)
+        {
+            if (shots.Count == 0) return;
+            Show(shotIndex + delta, true);
+        }
+
+        void Show(int index, bool manual)
+        {
+            if (shots.Count == 0) return;
+            shotIndex = ((index % shots.Count) + shots.Count) % shots.Count;
+            shotImage.Source = LoadBitmap(shots[shotIndex], 0);
+            shotImage.BeginAnimation(OpacityProperty, new DoubleAnimation(0.2, 1, TimeSpan.FromMilliseconds(220)));
+            for (int i = 0; i < thumbs.Children.Count; i++)
+            {
+                ((Border)thumbs.Children[i]).BorderBrush = i == shotIndex ? Theme.AccentBrush : Brushes.Transparent;
+                ((Border)thumbs.Children[i]).Opacity = i == shotIndex ? 1 : 0.6;
+                var d = (Border)dots.Children[i];
+                d.Width = i == shotIndex ? 18 : 6;
+                d.Background = i == shotIndex ? Theme.AccentBrush : Theme.TextFaint;
+            }
+            if (manual && galleryTimer.IsEnabled) { galleryTimer.Stop(); galleryTimer.Start(); }   // restart the interval
+        }
+
+        // -------- settings
+
+        FrameworkElement BuildSettings()
+        {
+            var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Hidden, Margin = new Thickness(40, 0, 40, 0), Padding = new Thickness(0, 0, 6, 0) };
+            var g = new Grid();
+            g.ColumnDefinitions.Add(new ColumnDefinition());
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18) });
+            g.ColumnDefinitions.Add(new ColumnDefinition());
+            scroll.Content = g;
+
+            var left = new StackPanel();
+            g.Children.Add(left);
+            var right = new StackPanel();
+            Grid.SetColumn(right, 2);
+            g.Children.Add(right);
+
+            // Display
+            var display = new StackPanel();
+            display.Children.Add(Theme.Heading("Display"));
+            display.Children.Add(SettingRow("Window size", "Initial size of the game window. It is reduced automatically if it does not fit your screen.",
+                Segmented("scale", new[] { "1", "2", "3", "4" }, new[] { "1×", "2×", "3×", "4×" }, "2")));
+            display.Children.Add(SettingRow("Start in fullscreen", "You can always switch with F11 while playing.", Toggle("fullscreen", false)));
+            display.Children.Add(SettingRow("Pixel filter", "Sharp keeps the original pixels, smooth blurs them slightly when scaled.",
+                Segmented("filter", new[] { "sharp", "smooth" }, new[] { "Sharp", "Smooth" }, "sharp")));
+            left.Children.Add(Theme.Card(display));
+            left.Children.Add(Spacer(14));
+
+            // Experimental
+            var exp = new StackPanel();
+            exp.Children.Add(Theme.Heading("Experimental"));
+            exp.Children.Add(SettingRow("Accurate card timing", "Lets game data arrive from the cartridge with a delay, like on the real console. Needed to get further after starting a new game. May still be unstable.",
+                Toggle("cardTiming", false)));
+            left.Children.Add(Theme.Card(exp));
+
+            // Coming later
+            var later = new StackPanel();
+            later.Children.Add(Theme.Heading("Coming later"));
+            foreach (var item in new[]
+            {
+                new[] { "Graphics enhancements", "Higher internal resolution for 3D, widescreen and screen layouts." },
+                new[] { "Audio", "Music and sound effects (not implemented yet)." },
+                new[] { "Controller and key mapping", "Gamepad support and freely assignable keys." },
+                new[] { "Touch screen", "Use the mouse as the stylus on the bottom screen." }
+            })
+            {
+                var row = SettingRow(item[0], item[1], Pill("Planned"));
+                row.Opacity = 0.75;
+                later.Children.Add(row);
+            }
+            right.Children.Add(Theme.Card(later));
+            right.Children.Add(Spacer(14));
+
+            // Files
+            var files = new StackPanel();
+            files.Children.Add(Theme.Heading("Files"));
+            var logs = Theme.MakeButton("Open log folder", Theme.Control, Theme.Text, 12.5, new Thickness(14, 7, 14, 8), 8);
+            logs.Click += delegate { string d = Path.Combine(baseDir, "build", "logs"); Directory.CreateDirectory(d); Process.Start("explorer.exe", "\"" + d + "\""); };
+            files.Children.Add(SettingRow("Game log", "Output of the last session, useful for bug reports.", logs));
+            var shotsBtn = Theme.MakeButton("Open folder", Theme.Control, Theme.Text, 12.5, new Thickness(14, 7, 14, 8), 8);
+            shotsBtn.Click += delegate { string d = Full(game.Screenshots ?? "screenshots"); Directory.CreateDirectory(d); Process.Start("explorer.exe", "\"" + d + "\""); };
+            files.Children.Add(SettingRow("Screenshots", "Images shown in the gallery. Reloaded when the launcher starts.", shotsBtn));
+            var reset = Theme.MakeButton("Reset settings", Theme.Control, Theme.Text, 12.5, new Thickness(14, 7, 14, 8), 8);
+            reset.Click += delegate
+            {
+                foreach (var k in new[] { "scale", "fullscreen", "filter", "cardTiming" }) settings.Data.Remove(game.Id + ":" + k);
+                settings.Save();
+                var newPage = BuildSettings();
+                var parent = (Grid)settingsPage.Parent;
+                Grid.SetRow(newPage, 2);
+                parent.Children.Remove(settingsPage);
+                parent.Children.Add(newPage);
+                settingsPage = newPage;
+                ShowTab(true);
+            };
+            files.Children.Add(SettingRow("Defaults", "Restore all settings on this page.", reset));
+            right.Children.Add(Theme.Card(files));
+
+            var hint = Theme.Label("Settings are applied the next time the game starts.", 11.5, Theme.TextFaint, FontWeights.Normal);
+            hint.Margin = new Thickness(2, 12, 0, 8);
+            left.Children.Add(hint);
+            return scroll;
+        }
+
+        FrameworkElement SettingRow(string title, string desc, UIElement control)
+        {
+            var g = new Grid { Margin = new Thickness(0, 4, 0, 14) };
+            g.ColumnDefinitions.Add(new ColumnDefinition());
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var text = new StackPanel { Margin = new Thickness(0, 0, 18, 0) };
+            text.Children.Add(Theme.Label(title, 13.5, Theme.Text, FontWeights.SemiBold));
+            var d = Theme.Label(desc, 12, Theme.TextDim, FontWeights.Normal);
+            d.Margin = new Thickness(0, 3, 0, 0);
+            d.LineHeight = 18;
+            text.Children.Add(d);
+            g.Children.Add(text);
+            var fe = control as FrameworkElement;
+            if (fe != null) fe.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(control, 1);
+            g.Children.Add(control);
+            return g;
+        }
+
+        UIElement Pill(string text)
+        {
+            return new Border { Background = Theme.Control, CornerRadius = new CornerRadius(10), Padding = new Thickness(10, 3, 10, 4), Child = Theme.Label(text, 11, Theme.TextDim, FontWeights.SemiBold) };
+        }
+
+        string Setting(string key, string def) { return settings.Get(game.Id + ":" + key, def); }
+        void SetSetting(string key, string value) { settings.Set(game.Id + ":" + key, value); }
+
+        UIElement Toggle(string key, bool def)
+        {
+            var t = Theme.MakeToggle(Setting(key, def ? "1" : "0") == "1");
+            t.Checked += delegate { SetSetting(key, "1"); };
+            t.Unchecked += delegate { SetSetting(key, "0"); };
+            return t;
+        }
+
+        UIElement Segmented(string key, string[] values, string[] labels, string def)
+        {
+            var box = new Border { Background = Theme.Panel, BorderBrush = Theme.CardBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(9), Padding = new Thickness(3) };
+            var row = new StackPanel { Orientation = Orientation.Horizontal };
+            var buttons = new List<Button>();
+            Action refresh = delegate
+            {
+                string cur = Setting(key, def);
+                for (int i = 0; i < buttons.Count; i++)
+                {
+                    bool on = values[i] == cur;
+                    buttons[i].Background = on ? Theme.AccentBrush : Brushes.Transparent;
+                    buttons[i].Foreground = on ? Brushes.White : Theme.TextDim;
+                }
+            };
+            for (int i = 0; i < values.Length; i++)
+            {
+                string v = values[i];
+                var b = Theme.MakeButton(labels[i], Brushes.Transparent, Theme.TextDim, 12.5, new Thickness(12, 5, 12, 6), 7);
+                b.MinWidth = 40;
+                b.Click += delegate { SetSetting(key, v); refresh(); };
+                buttons.Add(b);
+                row.Children.Add(b);
+            }
+            refresh();
+            box.Child = row;
+            return box;
         }
 
         Button CaptionButton(string glyph, RoutedEventHandler click, bool danger)
@@ -468,7 +912,7 @@ namespace RecompLauncher
             var b = Theme.MakeButton(glyph, Brushes.Transparent, Theme.TextDim, 10, new Thickness(0), 0);
             b.FontFamily = new FontFamily("Segoe MDL2 Assets, Segoe Fluent Icons");
             b.FontWeight = FontWeights.Normal;
-            b.Width = 46; b.Height = 44;
+            b.Width = 46; b.Height = 40;
             b.Click += click;
             b.MouseEnter += delegate { b.Background = danger ? Theme.Hex("#C42B1C") : Theme.Hex("#22252C"); b.Foreground = Brushes.White; };
             b.MouseLeave += delegate { b.Background = Brushes.Transparent; b.Foreground = Theme.TextDim; };
@@ -476,141 +920,38 @@ namespace RecompLauncher
             return b;
         }
 
-        Style LibraryItemStyle()
+        static void OpenUrl(string url)
         {
-            const string xaml =
-                "<Style xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' TargetType='ListBoxItem'>" +
-                "<Setter Property='Margin' Value='0,0,0,4'/><Setter Property='Cursor' Value='Hand'/>" +
-                "<Setter Property='Template'><Setter.Value><ControlTemplate TargetType='ListBoxItem'>" +
-                "<Border x:Name='b' CornerRadius='10' Padding='10' Background='Transparent'><ContentPresenter/></Border>" +
-                "<ControlTemplate.Triggers>" +
-                "<Trigger Property='IsMouseOver' Value='True'><Setter TargetName='b' Property='Background' Value='#1D2027'/></Trigger>" +
-                "<Trigger Property='IsSelected' Value='True'><Setter TargetName='b' Property='Background' Value='#252933'/></Trigger>" +
-                "</ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>";
-            return (Style)XamlReader.Parse(xaml);
+            try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); } catch (Exception) { }
         }
 
-        UIElement LibraryItem(Game g)
-        {
-            var row = new Grid();
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(44) });
-            row.ColumnDefinitions.Add(new ColumnDefinition());
-            var accent = Theme.ColorOf(g.Accent, "#7C5CFF");
-            var tile = new Border
-            {
-                Width = 44, Height = 44, CornerRadius = new CornerRadius(10),
-                Background = new LinearGradientBrush(accent, Darken(accent, 0.45), 45),
-                Child = new TextBlock { Text = Initials(g.Title), Foreground = Brushes.White, FontWeight = FontWeights.Bold, FontSize = 15, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }
-            };
-            row.Children.Add(tile);
-            var text = new StackPanel { Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-            var title = Theme.Label(g.Title, 13, Theme.Text, FontWeights.SemiBold);
-            title.TextWrapping = TextWrapping.NoWrap;
-            title.TextTrimming = TextTrimming.CharacterEllipsis;
-            text.Children.Add(title);
-            text.Children.Add(Theme.Label(g.Platform ?? "", 11.5, Theme.TextFaint, FontWeights.Normal));
-            Grid.SetColumn(text, 1);
-            row.Children.Add(text);
-            return row;
-        }
-
-        static string Initials(string title)
-        {
-            var words = title.Split(new[] { ' ', ':', '&', '-' }, StringSplitOptions.RemoveEmptyEntries).Where(w => char.IsLetter(w[0])).ToArray();
-            if (words.Length == 0) return "?";
-            if (words.Length == 1) return words[0].Substring(0, Math.Min(2, words[0].Length)).ToUpperInvariant();
-            return (words[0][0].ToString() + words[1][0]).ToUpperInvariant();
-        }
-
-        static Color Darken(Color c, double f)
-        {
-            return Color.FromRgb((byte)(c.R * (1 - f)), (byte)(c.G * (1 - f)), (byte)(c.B * (1 - f)));
-        }
-
-        // -------- selection and state
-
-        void Select(Game g)
-        {
-            current = g;
-            var parts = (object[])hero.Tag;
-            var banner = (Border)parts[0];
-            var glow = (Canvas)parts[1];
-            var accent = Theme.ColorOf(g.Accent, "#7C5CFF");
-            banner.Background = new LinearGradientBrush(new GradientStopCollection
-            {
-                new GradientStop(accent, 0), new GradientStop(Darken(accent, 0.55), 0.65), new GradientStop(Darken(accent, 0.8), 1)
-            }, new Point(0, 0), new Point(1, 1));
-            glow.Children.Clear();
-            var circle = new System.Windows.Shapes.Ellipse { Width = 420, Height = 420, Fill = new RadialGradientBrush(Color.FromArgb(0x55, 0xFF, 0xFF, 0xFF), Color.FromArgb(0, 0xFF, 0xFF, 0xFF)) };
-            Canvas.SetRight(circle, -120); Canvas.SetTop(circle, -170);
-            glow.Children.Add(circle);
-
-            heroPlatform.Text = ((g.Platform ?? "") + (g.Region != null ? "  ·  " + g.Region : "")).ToUpperInvariant();
-            heroTitle.Text = g.Title;
-            heroSubtitle.Text = g.Subtitle ?? "";
-            aboutText.Inlines.Clear();
-            if (!string.IsNullOrEmpty(g.Status))
-            {
-                aboutText.Inlines.Add(new System.Windows.Documents.Run(g.Status) { Foreground = Theme.Text, FontWeight = FontWeights.SemiBold });
-                aboutText.Inlines.Add(new System.Windows.Documents.LineBreak());
-                aboutText.Inlines.Add(new System.Windows.Documents.LineBreak());
-            }
-            aboutText.Inlines.Add(new System.Windows.Documents.Run(g.Description ?? ""));
-            if (g.RomLabel != null)
-            {
-                aboutText.Inlines.Add(new System.Windows.Documents.LineBreak());
-                aboutText.Inlines.Add(new System.Windows.Documents.LineBreak());
-                aboutText.Inlines.Add(new System.Windows.Documents.Run("Supported version: ") { Foreground = Theme.TextFaint });
-                aboutText.Inlines.Add(new System.Windows.Documents.Run(g.RomLabel));
-            }
-
-            controlsPanel.Children.Clear();
-            foreach (var c in g.Controls)
-            {
-                var row = new Grid { Margin = new Thickness(0, 0, 0, 6) };
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
-                row.ColumnDefinitions.Add(new ColumnDefinition());
-                var key = new Border { Background = Theme.Hex("#23262E"), BorderBrush = Theme.CardBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 2, 8, 3), HorizontalAlignment = HorizontalAlignment.Left, Child = Theme.Label(c[0], 12, Theme.Text, FontWeights.SemiBold) };
-                row.Children.Add(key);
-                var action = Theme.Label(c[1], 12.5, Theme.TextDim, FontWeights.Normal);
-                action.VerticalAlignment = VerticalAlignment.Center;
-                Grid.SetColumn(action, 1);
-                row.Children.Add(action);
-                controlsPanel.Children.Add(row);
-            }
-            if (g.Controls.Count == 0) controlsPanel.Children.Add(Theme.Label("No controls listed.", 12.5, Theme.TextFaint, FontWeights.Normal));
-
-            RefreshState();
-        }
+        // -------- state
 
         enum RomState { Missing, Verified, Unverified, Wrong }
 
-        RomState CheckRom(Game g, bool hashNow)
+        RomState CheckRom(bool hashNow)
         {
-            string target = Full(g.RomTarget);
+            string target = Full(game.RomTarget);
             if (target == null || !File.Exists(target)) return RomState.Missing;
-            if (string.IsNullOrEmpty(g.RomSha1)) return RomState.Verified;
+            if (string.IsNullOrEmpty(game.RomSha1)) return RomState.Verified;
             var fi = new FileInfo(target);
             string stamp = fi.Length + ":" + fi.LastWriteTimeUtc.Ticks;
-            if (settings.Get("verified:" + g.Id) == stamp) return RomState.Verified;
+            if (settings.Get("verified:" + game.Id) == stamp) return RomState.Verified;
             if (!hashNow) return RomState.Unverified;
-            bool ok = string.Equals(Sha1(target), g.RomSha1, StringComparison.OrdinalIgnoreCase);
-            if (ok) settings.Set("verified:" + g.Id, stamp);
+            bool ok = string.Equals(Sha1(target), game.RomSha1, StringComparison.OrdinalIgnoreCase);
+            if (ok) settings.Set("verified:" + game.Id, stamp);
             return ok ? RomState.Verified : RomState.Wrong;
         }
 
-        bool IsBuilt(Game g) { return g.LaunchExe != null && File.Exists(Full(g.LaunchExe)); }
+        bool IsBuilt() { return game.LaunchExe != null && File.Exists(Full(game.LaunchExe)); }
 
         void RefreshState()
         {
-            if (current == null) return;
-            var rom = CheckRom(current, false);
+            var rom = CheckRom(false);
             if (rom == RomState.Unverified)
             {
-                // Hash in the background once, then show the result
                 SetBadge(romBadge, "•  Checking ROM…", Theme.TextDim);
-                var g = current;
-                Task.Run(() => CheckRom(g, true)).ContinueWith(t => Dispatcher.Invoke(new Action(() => { if (current == g) RefreshState(); })));
+                Task.Run(() => CheckRom(true)).ContinueWith(t => Dispatcher.Invoke(new Action(RefreshState)));
                 return;
             }
             switch (rom)
@@ -619,7 +960,7 @@ namespace RecompLauncher
                 case RomState.Wrong: SetBadge(romBadge, "●  Unsupported ROM", Theme.Bad); break;
                 default: SetBadge(romBadge, "●  ROM required", Theme.Warn); break;
             }
-            bool built = IsBuilt(current);
+            bool built = IsBuilt();
             SetBadge(buildBadge, built ? "●  Ready" : "●  Not built", built ? Theme.Good : Theme.Warn);
 
             playButton.IsEnabled = !busy && rom == RomState.Verified && built;
@@ -627,13 +968,9 @@ namespace RecompLauncher
             romButton.Content = rom == RomState.Verified ? "Change ROM…" : "Select ROM…";
 
             if (busy) return;
-            if (rom != RomState.Verified) ShowStatus(rom == RomState.Wrong ? "The ROM in place does not match the supported version. Select the correct one." : "Select your own copy of the game to get started.", rom == RomState.Wrong ? Theme.Bad : Theme.TextDim);
-            else if (!built) ShowStatus(current.BuildHint ?? "The game executable was not found.", Theme.Warn);
-            else
-            {
-                string last = settings.Get("last:" + current.Id);
-                ShowStatus(last ?? "Ready to play.", Theme.TextDim);
-            }
+            if (rom != RomState.Verified) ShowStatus(rom == RomState.Wrong ? "The ROM in place does not match the supported version. Select the correct one." : "Select your own copy of the game to get started.");
+            else if (!built) ShowStatus(game.BuildHint ?? "The game executable was not found.");
+            else ShowStatus(settings.Get("last:" + game.Id) ?? "Ready to play.");
         }
 
         void SetBadge(TextBlock t, string text, Brush color)
@@ -642,24 +979,19 @@ namespace RecompLauncher
             var parts = text.Split(new[] { "  " }, 2, StringSplitOptions.None);
             if (parts.Length == 2)
             {
-                t.Inlines.Add(new System.Windows.Documents.Run(parts[0] + "  ") { Foreground = color });
-                t.Inlines.Add(new System.Windows.Documents.Run(parts[1]) { Foreground = Brushes.White });
+                t.Inlines.Add(new Run(parts[0] + "  ") { Foreground = color });
+                t.Inlines.Add(new Run(parts[1]) { Foreground = Brushes.White });
             }
             else t.Text = text;
         }
 
-        void ShowStatus(string text, Brush color)
-        {
-            statusText.Text = text;
-            statusText.Foreground = color;
-        }
+        void ShowStatus(string text) { statusText.Text = text; }
 
         void SetBusy(bool b, string text)
         {
             busy = b;
             progress.Visibility = b ? Visibility.Visible : Visibility.Collapsed;
-            if (text != null) ShowStatus(text, Theme.TextDim);
-            library.IsEnabled = !b;
+            if (text != null) ShowStatus(text);
             RefreshState();
         }
 
@@ -674,54 +1006,53 @@ namespace RecompLauncher
 
         async void SelectRom()
         {
-            var g = current;
-            if (g == null || g.RomTarget == null) return;
-            var dlg = new OpenFileDialog { Title = "Select your copy of " + g.Title, Filter = g.RomFilter + "|All files (*.*)|*.*" };
+            if (game.RomTarget == null) return;
+            var dlg = new OpenFileDialog { Title = "Select your copy of " + game.Title, Filter = game.RomFilter + "|All files (*.*)|*.*" };
             if (dlg.ShowDialog(this) != true) return;
-            string source = dlg.FileName, target = Full(g.RomTarget);
+            string source = dlg.FileName, target = Full(game.RomTarget);
 
             SetBusy(true, "Checking ROM…");
             string error = null;
             try
             {
                 string hash = await Task.Run(() => Sha1(source));
-                if (!string.IsNullOrEmpty(g.RomSha1) && !string.Equals(hash, g.RomSha1, StringComparison.OrdinalIgnoreCase))
-                    error = "This file is not the supported version (" + (g.RomLabel ?? "see games.json") + ").\nSHA-1: " + hash;
+                if (!string.IsNullOrEmpty(game.RomSha1) && !string.Equals(hash, game.RomSha1, StringComparison.OrdinalIgnoreCase))
+                    error = "This file is not the supported version (" + (game.RomLabel ?? "see game.json") + ").\nSHA-1: " + hash;
                 else
                 {
                     if (!string.Equals(Path.GetFullPath(source), target, StringComparison.OrdinalIgnoreCase))
                     {
-                        ShowStatus("Copying ROM…", Theme.TextDim);
+                        ShowStatus("Copying ROM…");
                         Directory.CreateDirectory(Path.GetDirectoryName(target));
                         await Task.Run(() => File.Copy(source, target, true));
                     }
                     var fi = new FileInfo(target);
-                    settings.Set("verified:" + g.Id, fi.Length + ":" + fi.LastWriteTimeUtc.Ticks);
-                    error = await RunSetup(g, true);
+                    settings.Set("verified:" + game.Id, fi.Length + ":" + fi.LastWriteTimeUtc.Ticks);
+                    error = await RunSetup();
                 }
             }
             catch (Exception e) { error = e.Message; }
             SetBusy(false, null);
             if (error != null)
             {
-                ShowStatus(error.Split('\n')[0], Theme.Bad);
-                MessageBox.Show(this, error, "Recomp Launcher", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ShowStatus(error.Split('\n')[0]);
+                MessageBox.Show(this, error, game.Title, MessageBoxButton.OK, MessageBoxImage.Warning);
             }
-            else ShowStatus("ROM verified. Ready to play.", Theme.Good);
+            else ShowStatus("ROM verified. Ready to play.");
         }
 
         // Runs the one-time setup steps. Returns an error message or null.
-        async Task<string> RunSetup(Game g, bool force)
+        async Task<string> RunSetup()
         {
-            foreach (var step in g.Setup)
+            foreach (var step in game.Setup)
             {
                 // Already done (e.g. data extracted before). A new ROM of the same version yields the same data.
                 if (step.SkipIfExists != null && File.Exists(Full(step.SkipIfExists))) continue;
                 string exe = Full(step.Exe);
                 if (exe == null || !File.Exists(exe))
                     return (step.Label ?? "Setup") + " needs " + step.Exe + ", which was not found.";
-                ShowStatus((step.Label ?? "Preparing") + "…", Theme.TextDim);
-                var psi = new ProcessStartInfo(exe, Expand(g, step.Args))
+                ShowStatus((step.Label ?? "Preparing") + "…");
+                var psi = new ProcessStartInfo(exe, Expand(step.Args))
                 {
                     WorkingDirectory = baseDir, UseShellExecute = false, CreateNoWindow = true,
                     RedirectStandardOutput = true, RedirectStandardError = true
@@ -743,31 +1074,37 @@ namespace RecompLauncher
 
         async void Play()
         {
-            var g = current;
-            if (g == null || busy) return;
+            if (busy) return;
             SetBusy(true, "Preparing…");
-            string error = await RunSetup(g, false);
+            string error = await RunSetup();
             if (error != null)
             {
                 SetBusy(false, null);
-                ShowStatus(error.Split('\n')[0], Theme.Bad);
-                MessageBox.Show(this, error, "Recomp Launcher", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ShowStatus(error.Split('\n')[0]);
+                MessageBox.Show(this, error, game.Title, MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            string exe = Full(g.LaunchExe);
+            string exe = Full(game.LaunchExe);
             string logDir = Path.Combine(baseDir, "build", "logs");
             Directory.CreateDirectory(logDir);
-            string logPath = Path.Combine(logDir, g.Id + ".log");
-            var psi = new ProcessStartInfo(exe, Expand(g, g.LaunchArgs))
+            string logPath = Path.Combine(logDir, game.Id + ".log");
+            var psi = new ProcessStartInfo(exe)
             {
                 WorkingDirectory = Path.GetDirectoryName(exe), UseShellExecute = false, CreateNoWindow = true,
                 RedirectStandardOutput = true, RedirectStandardError = true
             };
             // Relative arguments are meant relative to the launcher folder
-            psi.Arguments = string.Join(" ", SplitArgs(Expand(g, g.LaunchArgs)).Select(a => Quote(MakeAbsoluteIfPath(a))));
-            ShowStatus("Running " + g.Title + "…", Theme.Good);
+            psi.Arguments = string.Join(" ", SplitArgs(Expand(game.LaunchArgs)).Select(a => Quote(MakeAbsoluteIfPath(a))));
+            // Settings -> environment of the game
+            psi.EnvironmentVariables["BIS_SCALE"] = Setting("scale", "2");
+            psi.EnvironmentVariables["BIS_FULLSCREEN"] = Setting("fullscreen", "0");
+            psi.EnvironmentVariables["BIS_FILTER"] = Setting("filter", "sharp");
+            if (Setting("cardTiming", "0") == "1") psi.EnvironmentVariables["BIS_CARD_DELAY"] = "2048";
+
+            ShowStatus("Running " + game.Title + "…");
             progress.Visibility = Visibility.Collapsed;
+            galleryTimer.Stop();
             WindowState = WindowState.Minimized;
 
             string summary = await Task.Run(() =>
@@ -798,8 +1135,9 @@ namespace RecompLauncher
 
             WindowState = WindowState.Normal;
             Activate();
-            string text = "Last session: " + DateTime.Now.ToString("HH:mm") + (summary != null ? " — " + summary : "") + "  (log: build\\logs\\" + g.Id + ".log)";
-            settings.Set("last:" + g.Id, text);
+            if (shots.Count > 1) galleryTimer.Start();
+            string text = "Last session: " + DateTime.Now.ToString("HH:mm") + (summary != null ? " — " + summary : "") + "  (log: build\\logs\\" + game.Id + ".log)";
+            settings.Set("last:" + game.Id, text);
             SetBusy(false, null);
         }
 
@@ -829,11 +1167,30 @@ namespace RecompLauncher
     static class Program
     {
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
             string baseDir = AppDomain.CurrentDomain.BaseDirectory;
             var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
-            app.Run(new LauncherWindow(baseDir));
+            var win = new LauncherWindow(baseDir);
+            // --snapshot <file.png> [settings]: render the window to an image and exit (for the README)
+            if (args.Length >= 2 && args[0] == "--snapshot")
+            {
+                win.ContentRendered += delegate
+                {
+                    win.Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        if (args.Length >= 3 && args[2] == "settings") win.GetType().GetMethod("ShowTab", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).Invoke(win, new object[] { true });
+                        win.UpdateLayout();
+                        var rtb = new RenderTargetBitmap((int)win.ActualWidth, (int)win.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+                        rtb.Render((Visual)win.Content);
+                        var enc = new PngBitmapEncoder();
+                        enc.Frames.Add(BitmapFrame.Create(rtb));
+                        using (var f = File.Create(args[1])) enc.Save(f);
+                        win.Close();
+                    }), DispatcherPriority.ApplicationIdle);
+                };
+            }
+            app.Run(win);
         }
     }
 }

@@ -26,5 +26,8 @@ __pycache__/
 .idea/
 
 # Launcher build output
-/RecompLauncher.exe
-/games.json
+/game.json
+
+# Local screenshots rendered from your own ROM (shown in the launcher) - never commit
+screenshots/
+/BISLauncher.exe

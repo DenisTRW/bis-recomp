@@ -20,9 +20,24 @@ static uint64_t fps_t0, fps_frames;
 
 #define FRAME_NS 16715000ull   /* DS: 59,826 Bilder/s */
 
+/* Einstellungen vom Launcher (Umgebungsvariablen):
+ *   BIS_SCALE=1..4      Fenstergröße als Vielfaches von 256x384 (Standard 2, passt sich dem Bildschirm an)
+ *   BIS_FULLSCREEN=1    im Vollbild starten
+ *   BIS_FILTER=smooth   weiche statt scharfer Pixel */
+static int env_int(const char *name, int def) {
+    const char *s = SDL_getenv(name);
+    return s && *s ? SDL_atoi(s) : def;
+}
+
 int frontend_init(void) {
     if (!SDL_Init(SDL_INIT_VIDEO)) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 0; }
-    win = SDL_CreateWindow("Mario & Luigi: Bowser's Inside Story - PC (prototype)", 512, 768, SDL_WINDOW_RESIZABLE);
+    int scale = env_int("BIS_SCALE", 2);
+    if (scale < 1) scale = 1;
+    if (scale > 4) scale = 4;
+    SDL_Rect usable;
+    if (SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &usable))
+        while (scale > 1 && 384 * scale + 40 > usable.h) scale--;   /* Titelleiste mitrechnen */
+    win = SDL_CreateWindow("Mario & Luigi: Bowser's Inside Story - PC (prototype)", 256 * scale, 384 * scale, SDL_WINDOW_RESIZABLE);
     if (!win) { fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError()); return 0; }
     ren = SDL_CreateRenderer(win, NULL);
     if (!ren) { fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError()); return 0; }
@@ -30,7 +45,10 @@ int frontend_init(void) {
     SDL_SetRenderLogicalPresentation(ren, 256, 384, SDL_LOGICAL_PRESENTATION_LETTERBOX);
     tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, 256, 384);
     if (!tex) { fprintf(stderr, "SDL_CreateTexture: %s\n", SDL_GetError()); return 0; }
-    SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);   /* scharfe Pixel */
+    const char *filter = SDL_getenv("BIS_FILTER");
+    int smooth = filter && SDL_strcasecmp(filter, "smooth") == 0;
+    SDL_SetTextureScaleMode(tex, smooth ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);   /* Standard: scharfe Pixel */
+    if (env_int("BIS_FULLSCREEN", 0)) SDL_SetWindowFullscreen(win, true);
     next_frame_ns = SDL_GetTicksNS();
     fps_t0 = next_frame_ns;
     return 1;

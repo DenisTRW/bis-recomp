@@ -27,7 +27,7 @@ card, the ARM7 co-processor, …).
 - Software 3D renderer (matrix stack, clipping, lighting, all 7 texture formats, alpha, Z/W buffer)
 - SDL3 window at 60 fps with keyboard controls
 - Unit tests for tricky recompiler cases (computed jumps, multi-entry functions, 64-bit division)
-- **Recomp Launcher**: a small game launcher that checks your ROM and starts the game
+- **Launcher**: checks your ROM, shows screenshots and info, has a settings page and starts the game
 
 ## Supported version
 
@@ -38,13 +38,24 @@ card, the ARM7 co-processor, …).
 | Revision | 0 |
 | SHA-1 | `5F35BFBF79A0947740795DD770D99E8EEA3AC85E` |
 
-## Recomp Launcher
+## Launcher
 
-![Recomp Launcher](docs/launcher.png)
+![Launcher](docs/launcher.png)
 
-`RecompLauncher.exe` lists the available games, verifies your ROM (SHA-1), copies it to where the
-port expects it, runs one-time setup steps (extracting the game data) and starts the game. Game
-output is written to `build/logs/<game>.log`.
+`BISLauncher.exe` is a small launcher made just for this port:
+
+- **Overview**: a screenshot gallery (arrows, thumbnails, mouse wheel), information about the game
+  and the port, the controls, and **Launch game**.
+- **ROM check**: verifies your copy (SHA-1), copies it to where the port expects it and runs the
+  one-time setup (extracting the game data).
+- **Settings**: window size, start in fullscreen, sharp or smooth pixels, and experimental
+  accurate card timing. They are passed to the game as environment variables
+  (`BIS_SCALE`, `BIS_FULLSCREEN`, `BIS_FILTER`, `BIS_CARD_DELAY`). Graphics enhancements, audio,
+  controller support and the touch screen are listed as planned.
+
+Screenshots are read from `screenshots/bis` and are **not part of the repository** – they come
+from your own copy of the game (for example frames rendered by the headless build in
+`build/frames`). Game output is written to `build/logs/bis.log`.
 
 Build it with:
 
@@ -53,33 +64,10 @@ launcher\build.bat
 ```
 
 It uses the C# compiler and WPF that ship with Windows (.NET Framework 4.x), so no SDK is needed.
-The result is `RecompLauncher.exe` in the repository root.
-
-### Adding games
-
-Games are described in `launcher/games.json` (copied next to the executable by `build.bat`).
-Each entry looks like this:
-
-```json
-{
-  "id": "bis",
-  "title": "Mario & Luigi: Bowser's Inside Story",
-  "subtitle": "Static recompilation · native PC port",
-  "platform": "Nintendo DS",
-  "region": "Europe",
-  "accent": "#E5484D",
-  "status": "Work in progress",
-  "description": "Shown in the About card.",
-  "rom": { "label": "Europe (CLJP, Revision 0)", "sha1": "…", "filter": "Nintendo DS ROM (*.nds)|*.nds", "target": "orig/baserom.nds" },
-  "setup": [ { "label": "Extracting game data", "exe": "tools/dsd.exe", "args": "rom extract --rom \"{rom}\" --output-path extract/eur", "skipIfExists": "extract/eur/arm9/arm9.bin" } ],
-  "launch": { "exe": "build/pc/bis_pc.exe", "args": "extract/eur", "buildHint": "Shown when the executable is missing." },
-  "controls": [ ["Arrow keys", "D-Pad"], ["X / C", "A / B"] ]
-}
-```
-
-Paths are relative to the launcher folder. `{rom}` expands to the absolute ROM target path.
-Arguments that name an existing file or folder are passed as absolute paths.
-
+The result is `BISLauncher.exe` in the repository root. Texts, ROM details, setup steps and the
+launch command live in `launcher/game.json` (copied next to the executable). Paths are relative
+to the launcher folder, `{rom}` expands to the absolute ROM target path, and arguments that name
+an existing file or folder are passed as absolute paths.
 ## Building the game
 
 Requirements (placed in `tools/`, not committed):
