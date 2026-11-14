@@ -144,6 +144,17 @@ reproduzierbar.
     Spielerstatus allein ist es also nicht. **Nächster Schritt:** herausfinden, worauf das
     Ereignis-Skript der Szene wartet (Kandidaten: Sequenz-Ende/Tick-Zähler des Sounds,
     Zeitgeber).
+  - **Fade-Kette gefunden (Stand, noch nicht behoben):** Bildschirm-Objekte der Szene
+    (`0x0233ab24` oben, `0x02339514` unten) haben eine Zustandsfunktion in `+4/+8` (Tabelle
+    `data_ov004_0210cc48`) und Fade-Felder: `+0xc4` Wert (20.12, steht auf −16), `+0xc8`
+    Schritt, `+0xcc` Restdauer, `+0xce` Bit 0 „aktiv“. Fade-Schritt: `func_ov003_0206ae54`,
+    Fade-Start: `func_ov003_0206ad4c(obj, von, bis, dauer)` – wird nach „Start“ **nie**
+    aufgerufen. Das Objekt hängt im Zustand `func_ov004_02091bbc` (wartet auf Wert > −16).
+    Dorthin kommt es über `func_ov004_0208c700` → `0208d0cc`. In `0208c700` entscheidet ein
+    Sprungverteiler über Bits 8-10 von `[[data_ov004_0210fda8]+0x68]` (Fälle 0-4), ob der
+    Fade gestartet wird; Fall 2/4 nur, wenn Bit 19 gesetzt ist, Fall 1 nur, wenn ein Bit in
+    `data_020564e0+8` nicht gesetzt ist, Fall 3 nie. **Nächster Schritt:** diesen Wert und die
+    Bits beim Aufruf von `0208c700` ausgeben und klären, wer sie setzt.
   - Neue Hilfen: `BIS_PROFILE_FROM=frame` (Zähler „Häufigste“ ab diesem Frame), der Bericht
     zeigt die zuletzt außerhalb von Interrupts betretene Funktion und deren letzte Lesezugriffe
     (findet Warteschleifen ohne Funktionsaufrufe).
