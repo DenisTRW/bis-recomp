@@ -175,6 +175,16 @@ reproduzierbar.
     (`0x020561d0`, `0x02056228`) – das Skriptsystem läuft also. Wahrscheinlich ist die
     Eröffnung ein Skript, das vor dem Einblenden auf etwas wartet. **Nächster Schritt:** das
     Skript-/Ereignissystem ab `0x02016254` verfolgen und den Befehl finden, bei dem es steht.
+  - Skriptsystem läuft weiter, nur selten: Flag-Zugriffe (`0x02016254`/`0x02015f0c`, aus
+    `func_ov006_02113b70` → `0x020161d4`) in Frame 2252, 2267, 2269, 2277, 2433, 2437, 2517,
+    2596, 2636, 2662. `func_ov006_02111874` ist nur die HUD-Zahlenanzeige.
+  - Zustandstabelle `data_ov004_0210cc48` (je 8 Byte): +0x20 = `func_ov004_020925a0` wartet
+    auf leeren Datenstrom (`[[0x0210fda8]+0x30]+0xac == 0`) und **startet dann das
+    Einblenden** (−16 → Zielwert, Dauer 16) – dieser Zustand wird bei uns nie erreicht.
+    Weitere Kandidaten mit derselben Strom-Bedingung: `func_ov004_0208e630`,
+    `func_ov004_020922dc`. **Nächster Schritt:** dynamisch prüfen, welcher Code die
+    Zustandsfunktion (`[obj+4]`) der Bildschirm-Objekte auf +0x20 setzen würde und warum
+    der Weg über `0208c700` → `0208d0cc` (direkt Zustand 3) gewählt wird.
   - Neue Hilfen: `BIS_PROFILE_FROM=frame` (Zähler „Häufigste“ ab diesem Frame), der Bericht
     zeigt die zuletzt außerhalb von Interrupts betretene Funktion und deren letzte Lesezugriffe
     (findet Warteschleifen ohne Funktionsaufrufe).
