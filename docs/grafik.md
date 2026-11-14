@@ -169,6 +169,12 @@ reproduzierbar.
     aus und warum passiert das bei uns nicht; (b) ob das Statuswort (Bits 8-10) beim echten
     Spiel vor `0208c700` ungleich 0 ist, also wer es normalerweise setzt (Kandidat:
     Ereignis-/Skriptsystem, z. B. `func_ov006_0211d3e8`, `func_ov007_0210fdc0`).
+  - `data_02056040` ist das Ereignis-Flag-Feld. `0208c700` setzt dort in Frame 2253 **kein**
+    Flag (Vermutung „Ereignis wird übersprungen“ damit widerlegt). Ab Frame 2267 setzt
+    `func_02005a78` (aufgerufen aus `0x02016254`/`0x02015f0c`) laufend Flags
+    (`0x020561d0`, `0x02056228`) – das Skriptsystem läuft also. Wahrscheinlich ist die
+    Eröffnung ein Skript, das vor dem Einblenden auf etwas wartet. **Nächster Schritt:** das
+    Skript-/Ereignissystem ab `0x02016254` verfolgen und den Befehl finden, bei dem es steht.
   - Neue Hilfen: `BIS_PROFILE_FROM=frame` (Zähler „Häufigste“ ab diesem Frame), der Bericht
     zeigt die zuletzt außerhalb von Interrupts betretene Funktion und deren letzte Lesezugriffe
     (findet Warteschleifen ohne Funktionsaufrufe).
