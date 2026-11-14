@@ -64,7 +64,10 @@ Lege den ROM als `orig/baserom.nds` ab (wird von Git ignoriert).
 - [x] **Hauptschleife läuft** (600 Frames, ~950 Funktionen, Anzeige an, VRAM gefüllt)
 - [x] **Erstes Bild** (15.11.2026): VRAM-Bänke, 2D-Renderer (Text-BGs, Sprites), PNG
       → Nintendo-Logo mit Mario & Luigi nach 600 Frames → [`docs/grafik.md`](docs/grafik.md)
-- [ ] SDL-Fenster statt PNG (Echtzeit, Tastatur)
+- [x] **SDL-Fenster** (60 fps, Tastatur): `recomp\runtime\run_pc.bat` → Titelbildschirm erreichbar
+- [x] Sound-Ersatz (Befehle erledigt, noch kein Ton) – war der große Bremsklotz
+- [x] Division und Rückwärts-Kopie: berechnete Sprünge über die ganze Funktion
+- [ ] Absturz nach dem Titelbildschirm (Overlay überschreibt Dateistruktur bei `0x020799cc`)
 - [ ] 3D-Renderer (Anzeige A nutzt BG0 als 3D-Ebene)
 - [ ] ARM7-Ersatz für Sound (Kanal 7)
 - [ ] Sprünge mitten in Funktionen (`0x02045xxx`)

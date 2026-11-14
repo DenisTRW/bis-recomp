@@ -12,6 +12,45 @@ Alle 100 Frames und am Ende entsteht `build/frames/frame_<n>.png` (256×384, bei
 Welche Engine oben liegt, entscheidet `POWCNT1` Bit 15. Die Bilder enthalten Spielgrafik und
 werden **nicht** committet (`build/` wird ignoriert).
 
+## Fenster (SDL3) – `recomp/runtime/frontend_sdl.c`
+
+```
+recomp\runtime\run_pc.bat          # spielen (ohne Frame-Limit)
+recomp\runtime\run_pc.bat 300      # Test: 300 Frames, Fenster schliesst sich selbst
+```
+
+SDL 3.4.20 (MinGW) liegt in `tools\SDL3-3.4.20\` und wird nicht committet. Programm:
+`build\pc\bis_pc.exe` mit `SDL3.dll` daneben. Etwa 60 Bilder/s (DS: 59,83), die aktuelle
+Rate steht im Fenstertitel. Bei einem Absturz bleibt das letzte Bild stehen, der Grund steht im
+Titel und der Bericht in der Konsole.
+
+| Taste | DS |
+|---|---|
+| Pfeiltasten | Steuerkreuz |
+| X / C | A (Mario) / B (Luigi) |
+| S / D | X / Y |
+| Enter / Rücktaste | Start / Select |
+| Q / W | L / R |
+| F11 / Esc | Vollbild / Beenden |
+
+X/Y liest das Spiel nicht aus einem Register, sondern aus `HW_BUTTON_XY_BUF` (`0x027fffa8`,
+Bit 10/11, aktiv-niedrig), den der ARM7 füllt. Früher stand dort 0, das Spiel sah X und Y
+also dauerhaft gedrückt. Behoben.
+
+**Eingabe-Automatik für Tests ohne Fenster:** Umgebungsvariable
+`BIS_INPUT="1100:start,1400:a"` drückt die Taste ab dem Frame für 6 Frames. Das bleibt
+reproduzierbar.
+
+## Stand nach dem Fenster (15.11.2026)
+
+- Logo → **Titelbildschirm** (Peachs Schloss, Logo „Mario & Luigi: Bowser's Inside Story“),
+  3000 Frames ohne Absturz, 1108 Funktionen.
+- Mit Start + A geht es weiter (1194 Funktionen), dann **Absturz bei Frame ~1496**:
+  Eine Dateistruktur bei `0x020799cc` wird beim Laden eines Overlays (Rückwärts-
+  Dekompression `0x02004970`) überschrieben, danach Lesen mit Archiv-Zeiger 0. Liegt
+  direkt vor dem verschobenen Heap-Anfang `0x020799e0`. **Nächste Hürde.**
+- Unterer Bildschirm bleibt weiß (3D-Ebene fehlt).
+
 ## VRAM-Bänke – `recomp/runtime/vram.c`
 
 9 Bänke (A–I) mit eigenem Speicher. Die Zuordnung folgt `VRAMCNT` (`0x04000240–0x04000249`,

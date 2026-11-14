@@ -501,7 +501,9 @@ class Translator:
                 except Unsupported:
                     pass   # ohne erkennbare Grenze: allgemeiner berechneter Sprung (unten)
             if ops[1].strip() == "pc" and op in ("add", "sub"):
-                return self.computed_jump(f"({rn} {'+' if op == 'add' else '-'} {o2})", insn)
+                # Ziele über die ganze Funktion: z. B. die Division 0x0204536c springt
+                # bis zu 0x150 Bytes weit in eine ausgerollte Schleife
+                return self.computed_jump(f"({rn} {'+' if op == 'add' else '-'} {o2})", insn, whole=True)
             raise Unsupported("Schreiben auf pc")
         rd = self.reg(rd_name, insn, read=False)
         if op in DP_LOGIC:

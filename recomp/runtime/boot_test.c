@@ -27,6 +27,9 @@
 #include "vram.h"
 #include "render2d.h"
 #include "png.h"
+#ifdef PLATFORM_SDL
+#include "frontend.h"
+#endif
 
 static uint32_t irq_pending_extra;   /* von Geräten angeforderte Interrupts (z. B. Karte fertig) */
 #define IRQ_CARD_DONE (1u << 19)
@@ -206,6 +209,14 @@ static void card_done_check(void) {
     if (!card_transfer_active() && (io16(0x1a0) & 0x4000)) irq_pending_extra |= IRQ_CARD_DONE;
 }
 
+/* Tasten (aktiv-niedrig): KEYINPUT Bits 0-9 = A, B, Select, Start, rechts, links,
+ * hoch, runter, R, L. X/Y liest das Spiel nicht aus einem Register, sondern aus
+ * dem vom ARM7 gefüllten Puffer HW_BUTTON_XY_BUF (0x027fffa8): Bit 10 = X, Bit 11 = Y.
+ * (Pad_ReadAndUpdate: (KEYINPUT | XY_BUF) ^ Maske) */
+static uint16_t keys_in = 0x03ff;
+static uint16_t keys_xy = 0x0c00;
+#define HW_BUTTON_XY_BUF 0x027fffa8u
+
 static uint32_t io_read_inner(uint32_t a, int size) {
     io_count(a, 0);
     if (a >= 0x04100000u) {                         /* IPC-FIFO-Empfang, Karte */
@@ -230,7 +241,13 @@ static uint32_t io_read_inner(uint32_t a, int size) {
     case 0x100: case 0x104: case 0x108: case 0x10c:
         set_io16(off, timer_cnt[(off - 0x100) / 4] += 64);
         HLE(SIMULIERT, "Timer zaehlen pro Lesezugriff statt nach Zeit"); break;
-    case 0x130: set_io16(0x130, 0x03ff); HLE(SIMULIERT, "Tasten: keine gedrueckt"); break;
+    case 0x130: set_io16(0x130, keys_in);
+#ifdef PLATFORM_SDL
+        HLE(ORIGINAL, "Tasten: Tastatur (SDL)");
+#else
+        HLE(SIMULIERT, "Tasten: keine gedrueckt");
+#endif
+        break;
     case 0x184:   /* IPCFIFOCNT: Senden nie voll, Empfang = Zustand der Antwort-Warteschlange */
         set_io16(0x184, (uint16_t)((io16(0x184) & 0x8404) | 0x0001 | (arm7_recv_empty() ? 0x0100 : 0)));
         HLE(ORIGINAL, "IPC-FIFO-Status (Senden nie voll)"); break;
@@ -604,9 +621,69 @@ static void resched_if_pending(CPU *c) {
     *c = keep;
 }
 
+/* ---- Eingabe-Automatik (Tests ohne Fenster), Umgebungsvariable BIS_INPUT:
+ *   "1100:start,1300:a,1500:a"  -> Taste ab diesem Frame für 6 Frames gedrückt
+ * Tasten: a b x y start select up down left right l r. Reproduzierbar, da an Frames gebunden. */
+static struct { uint64_t frame; uint16_t keybit; int xy; } script[64];
+static int script_n;
+
+static void script_load(void) {
+    const char *s = getenv("BIS_INPUT");
+    static const struct { const char *name; uint16_t bit; int xy; } names[] = {
+        { "a", 1 << 0, 0 }, { "b", 1 << 1, 0 }, { "select", 1 << 2, 0 }, { "start", 1 << 3, 0 },
+        { "right", 1 << 4, 0 }, { "left", 1 << 5, 0 }, { "up", 1 << 6, 0 }, { "down", 1 << 7, 0 },
+        { "r", 1 << 8, 0 }, { "l", 1 << 9, 0 }, { "x", 0x400, 1 }, { "y", 0x800, 1 } };
+    while (s && *s && script_n < 64) {
+        char key[16] = { 0 };
+        unsigned long long f;
+        if (sscanf(s, "%llu:%15[a-z]", &f, key) != 2) break;
+        for (unsigned i = 0; i < sizeof names / sizeof names[0]; i++)
+            if (!strcmp(key, names[i].name)) { script[script_n].frame = f; script[script_n].keybit = names[i].bit; script[script_n].xy = names[i].xy; script_n++; }
+        s = strchr(s, ',');
+        if (s) s++;
+    }
+}
+
+static void script_apply(void) {
+    if (!script_n) return;
+    keys_in = 0x03ff;
+    keys_xy = 0x0c00;
+    for (int i = 0; i < script_n; i++) {
+        if (frames >= script[i].frame && frames < script[i].frame + 6) {
+            if (script[i].xy) keys_xy &= (uint16_t)~script[i].keybit; else keys_in &= (uint16_t)~script[i].keybit;
+            HLE(SIMULIERT, "Tasten: Eingabe-Automatik (BIS_INPUT)");
+        }
+    }
+}
+
 static void vblank(CPU *c) {
     sched_trace(TR_TICK, (uint32_t)frames, 0);
     frames++;
+#ifndef PLATFORM_SDL
+    script_apply();
+#endif
+#ifdef PLATFORM_SDL
+    {
+        /* Echtzeit: Bild zeigen, Tastatur lesen, auf 60 Bilder/s bremsen */
+        static uint32_t top[256 * 192], bottom[256 * 192];
+        Gfx2D g = { io, pal, oam };
+        unsigned missing = 0;
+        int a_on_top = (io16(0x304) >> 15) & 1;
+        platform_inhibit_irq++;
+        render2d_engine(&g, a_on_top ? 0 : 1, top, 1, &missing);
+        render2d_engine(&g, a_on_top ? 1 : 0, bottom, 1, &missing);
+        frontend_present(top, bottom);
+        if (!frontend_poll(&keys_in, &keys_xy)) { platform_inhibit_irq--; stop("Fenster geschlossen"); }
+        frontend_pace();
+        platform_inhibit_irq--;
+    }
+#endif
+    /* ARM7-Ersatz: X/Y-Tasten in den gemeinsamen Puffer (Bits 0-9 und 12-15 bleiben 0:
+     * kein Debug-Knopf, Stift nicht unten, Klappe offen) */
+    {
+        uint8_t *xy = ptr(HW_BUTTON_XY_BUF);
+        xy[0] = (uint8_t)keys_xy; xy[1] = (uint8_t)(keys_xy >> 8);
+    }
     if (dump_every && frames % dump_every == 0) {
         char tag[32];
         snprintf(tag, sizeof tag, "%05llu", (unsigned long long)frames);
@@ -914,6 +991,13 @@ int main(int argc, char **argv) {
         watch_lo = (uint32_t)strtoul(argv[5], &colon, 16);
         watch_hi = watch_lo + (*colon == ':' ? (uint32_t)strtoul(colon + 1, NULL, 16) : 4);
     }
+#ifdef PLATFORM_SDL
+    /* Fenster-Modus: ohne Frame-Limit und Budget, keine PNG-Ausgabe */
+    if (argc <= 2) frame_limit = 0;
+    if (argc <= 3) mem_budget = UINT64_MAX;
+    dump_every = 0;
+    if (!frontend_init()) return 3;
+#endif
 
     /* Funktionstabelle sortieren */
     nfns = rc_functable_count;
@@ -949,6 +1033,8 @@ int main(int argc, char **argv) {
     wr32(0x027ffc00u + 0x388 + 4, 0xffffffffu);
     HLE(SIMULIERT, "ARM7: alle PXI-Kanaele als bereit gemeldet (ohne echte Gegenstelle)");
     set_io16(0x130, 0x03ff);
+    wr16(HW_BUTTON_XY_BUF, keys_xy);   /* X/Y nicht gedrückt (aktiv-niedrig) */
+    script_load();
 
     printf("Funktionen: %u, Frame-Limit %llu, Budget %llu Mio. Speicherzugriffe\n",
            nfns, (unsigned long long)frame_limit, (unsigned long long)(mem_budget / 1000000));
@@ -956,7 +1042,14 @@ int main(int argc, char **argv) {
      * OS_SaveContext an seine SDK-Thread-Struktur. */
     snprintf(frames_dir, sizeof frames_dir, "%s/../../build/frames", dir);
     sched_run(&cpu, BOOT_THREAD_KEY, boot_entry, NULL);
+#ifndef PLATFORM_SDL
     dump_frame("ende");
+#endif
     report();
+#ifdef PLATFORM_SDL
+    /* Nur beim echten Spielen (kein Frame-Limit) und nur bei einem Fehler offen lassen;
+     * Testläufe mit Frame-Limit sollen sich selbst beenden. */
+    if (!frame_limit && strcmp(stop_reason, "Fenster geschlossen") != 0) frontend_wait_close(stop_reason);
+#endif
     return 0;
 }

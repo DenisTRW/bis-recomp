@@ -222,6 +222,30 @@ static void tp_command(uint32_t data) {
     reply(TAG_TP, 0, 0x01000000u | cmd << 8);
 }
 
+/* ---------------------------------------------------------------- Kanal 7: Sound */
+
+#define TAG_SND 7
+#define SND_SHARED_WORK_PTR 0x020624e0u   /* ARM9-Variable: Zeiger auf SNDSharedWork */
+
+/* Der ARM9 schickt pro "Flush" die Adresse einer Befehlsliste. Der echte ARM7
+ * arbeitet sie ab und erhöht danach SNDSharedWork.finishCommandTag (+0). Darauf
+ * wartet der ARM9 (0x0203b9a8 liest den Zähler, dazwischen OS_SpinWait).
+ * Wir führen die Befehle (noch) nicht aus -> kein Ton, aber kein Warten. */
+static void snd_command(uint32_t data) {
+    if (data == 0) {
+        /* 0x0203b7cc: "jetzt verarbeiten"-Signal ohne neue Liste – zählt nicht */
+        HLE(SIMULIERT, "ARM7 Sound: Verarbeiten-Signal (ohne neue Liste)");
+        return;
+    }
+    uint32_t sw = rd32(SND_SHARED_WORK_PTR);
+    if (sw) {
+        wr32(sw, rd32(sw) + 1);
+        HLE(SIMULIERT, "ARM7 Sound: Befehlsliste als erledigt gemeldet (kein Ton)");
+    } else {
+        HLE(FEHLT, "ARM7 Sound: Befehlsliste vor Einrichtung des gemeinsamen Speichers");
+    }
+}
+
 /* ---------------------------------------------------------------- Eingang */
 
 void arm7_pxi_send(uint32_t word) {
@@ -237,6 +261,9 @@ void arm7_pxi_send(uint32_t word) {
         break;
     case TAG_TP:
         tp_command(data);
+        break;
+    case TAG_SND:
+        snd_command(data);
         break;
     default: {
         static int shown;

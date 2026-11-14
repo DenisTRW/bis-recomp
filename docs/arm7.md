@@ -18,7 +18,7 @@ PXI-Interrupt-Handler des Spiels verteilt die Antworten an die registrierten Cal
 | 11 | Karte (`CARDi_Request`) | INIT, IDENTIFY, Spielstand lesen/schreiben | SIMULIERT |
 | 5 | Uhr (RTC) | Datum/Zeit lesen mit **fester Zeit** (Fr, 09.10.2009, 12:00) | SIMULIERT |
 | 6 | Touch (TP) | Befehle bestätigen, Messung = „kein Stylus“ | SIMULIERT |
-| 7 | Sound (SND) | noch nicht beantwortet (Init schickt `0x02060c80`) | FEHLT |
+| 7 | Sound (SND) | Befehlslisten als erledigt gemeldet (`finishCommandTag`), kein Ton | SIMULIERT |
 | 8, 9 | Power, Mikrofon | noch nicht gesehen | – |
 
 ### Kanal 11: Karte
@@ -54,6 +54,17 @@ Mehrteilige Befehle, Sender z. B. `0x0203f490` (`TP_RequestAutoSamplingStart`):
 erstes Paket `Bit25 | Befehl<<8 | Arg`, letztes `Bit24 | 0x10000 | Arg`. Antwort
 `Bit24 | Befehl<<8 | 0`. `TP_WaitBusy` (`0x0203fa98`) wartet auf das Beschäftigt-Bit
 `1 << Befehl` in `0x020625f0+0x3a`. Rohdaten: `0x027fffaa`.
+
+### Kanal 7: Sound
+
+`SND_FlushCommand` (`0x0203b410`) schickt die Adresse einer Befehlsliste und hält
+höchstens 8 Listen „unterwegs“ (Zähler `0x020609a0+0x1c`). `SNDi_RecvCommandReply`
+(`0x0203b240`) gibt eine Liste frei, sobald `SNDSharedWork.finishCommandTag` (Zeiger in der
+ARM9-Variable `0x020624e0`) vom eigenen Zähler abweicht, und wartet sonst mit
+`OS_SpinWait`. Der Ersatz erhöht `finishCommandTag` je Liste. **Nachrichten mit Daten 0**
+(`0x0203b7cc`, „jetzt verarbeiten“) zählen nicht. Anfangs zählten sie mit, dadurch wurde der
+Zähler negativ, und das Spiel verbrauchte pro Frame Millionen Aufrufe in der Warteschleife
+(Faktor ~70 langsamer).
 
 ## Spielkarte (ROM-Bus) – `recomp/runtime/card.c`
 

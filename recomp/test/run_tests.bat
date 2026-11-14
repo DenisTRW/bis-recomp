@@ -25,7 +25,7 @@ gcc -O2 -w -I "%ROOT%\recomp\include" -I "%OUT%\fill" -I "%~dp0." ^
 
 echo.
 echo === MI_CpuCopyFast ===
-python -I "%ROOT%\recomp\recomp.py" "%ROOT%" --only MI_CpuCopyFast,func_01ff82d8,MI_CpuCopyFast_Rest10,func_01ff82f0,func_01ff8300,func_01ff8310,func_01ff8320,func_01ff8330,func_01ff8340,func_01ff8350,func_01ff8360,func_01ff8370,func_01ff8380 --out "%OUT%\copy" || exit /b 1
+python -I "%ROOT%\recomp\recomp.py" "%ROOT%" --only MI_CpuCopyFast,func_01ff82d8,MI_CpuCopyFast_Rest10,func_01ff82f0,func_01ff8300,func_01ff8310,func_01ff8320,func_01ff8330,func_01ff8340,func_01ff8350,func_01ff8360,func_01ff8370,MI_CpuCopyFastBackward,func_01ff83b4,MI_CpuCopyFastBackward_Rest10,func_01ff83cc,func_01ff83dc,func_01ff83ec,func_01ff83fc,func_01ff840c,func_01ff841c,func_01ff842c,func_01ff843c,func_01ff844c,func_01ff845c --out "%OUT%\copy" || exit /b 1
 gcc -O2 -w -I "%ROOT%\recomp\include" -I "%OUT%\copy" -I "%~dp0." ^
     -o "%OUT%\test_memcopy.exe" "%~dp0test_memcopy.c" "%~dp0harness.c" "%OUT%\copy\functable.c" "%OUT%\copy\itcm.c" || exit /b 1
 "%OUT%\test_memcopy.exe" || exit /b 1
