@@ -77,9 +77,24 @@ reproduzierbar.
     noch Reste der alten, während der neue Block geladen wird. Auf der Hardware ist der
     Karten-DMA dafür langsam genug, bei uns kommt der Block sofort und überschreibt die Reste
     (sichtbar: Lesezeiger springt um 3 Bytes in den neuen Block).
-  - Ein erster Versuch mit verzögertem Karten-DMA (`BIS_CARD_DELAY`) bringt schon den Start
-    zum Stehen. Der Ablauf des Karten-SDK (`0x02042780` Start, `0x02042340` Fertig-Interrupt,
-    DMA-Stopp `0x0203a3bc`) muss dafür genauer nachgebildet werden.
+  - **Neuer Befund (Karten-DMA):** Das Standardverhalten (DMA sofort fertig) lädt bei
+    DMA-Anforderungen **den falschen Block**. Ablauf im SDK: `0x02042780` Anforderung,
+    `0x02042410` setzt den Karten-Interrupt (`OS_ResetRequestIrqMask` + `OS_EnableIrqMask`),
+    `0x020422ec` schaltet den DMA scharf (wartet auf Bit 31), schreibt B7 und startet ROMCTRL,
+    der Fertig-Handler `0x02042340` stoppt den DMA, zählt `+0x200` weiter und startet ggf. den
+    nächsten Block. Bei uns lag noch eine alte „Karte fertig“-Meldung in der internen
+    Warteliste. `OS_ResetRequestIrqMask` löscht sie nicht, beim Freigeben feuert sie sofort,
+    der Handler zählt weiter, und es wird `adresse + 0x200` gelesen (z. B. `0393a800` →
+    `0393aa00`).
+  - Mit `BIS_CARD_DELAY=n` (Übertragung nach n Speicherzugriffen) löscht die IF-Quittung
+    auch die Warteliste. Dann stimmen alle Blöcke. Allerdings überschreibt der Streaming-Lader
+    schon in der Startphase ein Objekt von ov122 (`0x0208bfe8`, Datensatz-Handler
+    `0x01ff80a4`), und beim Wechsel zum Logo stürzt das Spiel ab (Frame 317 bei n = 2048,
+    später bei größerem n). Ursache noch offen: Beim Parsen steht im Ringpuffer nicht der
+    erwartete Block (Datensatzlänge 1 statt `0x0a74` laut ROM bei `0x0393a854`).
+  - Deshalb ist der Standard weiterhin „sofort“ (`BIS_CARD_DELAY=0`). Nächster Schritt:
+    beobachten, wann der DMA-Block im Ringpuffer ankommt und was der Lader zu diesem Zeitpunkt
+    liest (Watchpoint auf `0x0207eb94` mit `BIS_CARD_DELAY=2048`).
 
 Fehlersuche: `boot_test.exe … [funktion_hex] [adresse:laenge]` zeigt Argumente samt Frame
 und Vorgeschichte bzw. Schreibzugriffe mit Frame, `lr`, `sp` und Vorgeschichte. Umgebungsvariablen:

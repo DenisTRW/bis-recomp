@@ -256,6 +256,8 @@ static int dma_card_armed(void) {
 }
 static void card_fire(void);
 static void card_schedule(void) {
+    if (getenv("BIS_CARDLOG")) fprintf(stderr, "  [karte] planen? aktiv %d, DMA bereit %d, Countdown %u\n",
+                                       card_transfer_active(), dma_card_armed(), card_countdown);
     if (card_transfer_active() && dma_card_armed() && !card_countdown && !card_fire_pending) {
         if (!card_delay) { card_fire(); return; }   /* BIS_CARD_DELAY=0: sofort (altes Verhalten) */
         card_countdown = card_delay;
@@ -358,6 +360,11 @@ static void io_write_inner(uint32_t a, uint32_t v, int size) {
     if (off >= 0x214 && off < 0x218) {              /* IF: 1 schreiben = löschen */
         uint32_t mask = (size == 4 ? v : size == 2 ? (v & 0xffff) : (v & 0xff)) << ((off - 0x214) * 8);
         set_io32(0x214, io32(0x214) & ~mask);
+        /* Noch nicht ausgelieferte Geräte-Anforderungen gelten damit ebenfalls als gelöscht
+         * (OS_ResetRequestIrqMask). Sonst feuert ein altes "Karte fertig" in die nächste
+         * Übertragung und der Karten-Handler überspringt einen Block. Das setzt voraus, dass
+         * die Übertragung Zeit braucht (card_delay > 0), wie auf der Hardware. */
+        if (card_delay) irq_pending_extra &= ~mask;
         return;
     }
     if (size == 1) io[off] = (uint8_t)v;
