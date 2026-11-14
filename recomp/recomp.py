@@ -365,6 +365,15 @@ class Translator:
         if base == "bx":
             if ops[0] == "lr":
                 return "return;"
+            # Muster "ldr lr, =ziel / bx rN": rN aufrufen, danach weiter bei ziel
+            idx = self.f.insns.index(insn)
+            prev = self.f.insns[idx - 1] if idx > 0 else None
+            if prev is not None and prev.mn == "ldr" and split_ops(prev.ops)[0].strip() == "lr":
+                a = self.label_addr(split_ops(prev.ops)[1])
+                v = self.f.pool.get(a) if a is not None else None
+                if isinstance(v, str) and v in self.syms and self.syms[v][2] == "function":
+                    return (f"rc_call_indirect(c, {self.reg(ops[0], insn)}); "
+                            f"{cname(v)}(c); return;")
             return f"rc_call_indirect(c, {self.reg(ops[0], insn)}); return;"
 
         # ---- Datenverarbeitung
@@ -608,6 +617,7 @@ class Translator:
                     body.append((insn, [f'RC_TODO("{insn.text}");']))
         self.emit(f"/* {f.name} @ 0x{f.addr:08x} ({f.src}) */")
         self.emit(f"void {cname(f.name)}(CPU *c) {{")
+        self.emit(f"    RC_ENTER(0x{f.addr:08x}u);")
         for item in body:
             if isinstance(item, str):
                 self.emit("    " + item)
@@ -666,14 +676,14 @@ def main():
             for fn, lines in items:
                 fh.write("\n".join(lines) + "\n\n")
                 protos.append(f"void {cname(fn.name)}(CPU *c);")
-                table.append((mod, fn.addr, cname(fn.name)))
+                table.append((mod, fn.addr, cname(fn.name), fn.name))
     (out / "funcs.h").write_text("#pragma once\n#include \"recomp.h\"\n\n" + "\n".join(protos) + "\n")
     with open(out / "functable.c", "w", encoding="utf-8") as fh:
         fh.write('#include "recomp.h"\n#include "funcs.h"\n\n')
         fh.write("const RcFuncEntry rc_functable[] = {\n")
-        for mod, addr, name in table:
+        for mod, addr, name, orig in table:
             ov = -1 if not mod.startswith("ov") else int(mod[2:])
-            fh.write(f"    {{ 0x{addr:08x}u, {ov}, {name} }},\n")
+            fh.write(f"    {{ 0x{addr:08x}u, {ov}, {name}, \"{orig}\" }},\n")
         fh.write("};\nconst unsigned rc_functable_count = sizeof(rc_functable) / sizeof(rc_functable[0]);\n")
 
     ok = stats["insns"] - stats["todo_insns"]

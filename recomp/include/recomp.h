@@ -19,6 +19,7 @@ typedef struct RcFuncEntry {
     uint32_t addr;
     int overlay;            /* -1 = Hauptprogramm/ITCM/DTCM */
     RcFunc fn;
+    const char *name;
 } RcFuncEntry;
 
 extern const RcFuncEntry rc_functable[];
@@ -44,6 +45,14 @@ void rc_mcr(CPU *c, int op1, int crn, int crm, int op2, uint32_t v);
 void rc_todo(CPU *c, const char *what);         /* nicht übersetzter Befehl */
 
 #define RC_TODO(s) rc_todo(c, s)
+
+/* Optionaler Trace-Haken am Anfang jeder Funktion (mit -DRC_TRACE bauen) */
+#ifdef RC_TRACE
+void rc_enter(CPU *c, uint32_t addr);
+#define RC_ENTER(a) rc_enter(c, (a))
+#else
+#define RC_ENTER(a) ((void)0)
+#endif
 
 /* ---- Flags */
 #define NZ(x) do { uint32_t nz_ = (x); c->n = nz_ >> 31; c->z = (nz_ == 0); } while (0)

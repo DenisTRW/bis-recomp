@@ -54,7 +54,9 @@ Lege den ROM als `orig/baserom.nds` ab (wird von Git ignoriert).
       `Pad_Update` besteht 100 000 Zufallstests (w64devkit/GCC in `tools\`)
 - [ ] Rest-TODOs: rohe Offsets, Sprünge in fremde Funktionen, Sprungtabellen ohne `cmp`
 - [ ] Overlays: Funktionen pro Overlay, Laden/Entladen zur Laufzeit
-- [ ] Hauptprogramm kompiliert und läuft bis zur ersten Hardware-Abfrage
+- [x] Hauptprogramm kompiliert und läuft bis zur ersten Hardware-Abfrage
+      → [`docs/boot.md`](docs/boot.md): ~140 Funktionen inkl. OS/PXI/IRQ-Init und Tastenabfrage
+- [ ] Thread-Modell: SDK-Threads als Host-Fibers (aktueller Halt beim Thread-Wechsel nach IRQ)
 
 ### Phase 3: Plattform-Schicht (SDL + OpenGL)
 

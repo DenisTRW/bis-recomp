@@ -16,7 +16,7 @@ def esc(p):
     return str(p).replace("$", "$$").replace(" ", "$ ").replace(":", "$:")
 
 lines = [
-    f"cflags = {opt} -w -fno-strict-aliasing -I{inc} -I{rc}",
+    f"cflags = {opt} -w -fno-strict-aliasing -DRC_TRACE -I{inc} -I{rc}",
     "rule cc",
     f"  command = {gcc} $cflags -c $in -o $out",
     "  description = CC $in",
