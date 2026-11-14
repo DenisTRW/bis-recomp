@@ -46,7 +46,9 @@ gesichert und beim Fortsetzen wiederhergestellt.
   Neuwahl in `OS_SelectThread`.
 
 **Deterministisch:** Interrupts gibt es nur an festen Punkten (Leerlauf). Keine Uhrzeit,
-kein Zufall. Jedes Ereignis (Thread anlegen, Wechsel, Interrupt, Wecken, Frame) kommt in
+kein Zufall. **Einschränkung:** Wartet Code in einer Schleife ohne zu schlafen auf ein Flag,
+das ein Interrupt setzt, käme dieser Interrupt nie. Deshalb gibt es zusätzlich einen
+zählerbasierten Takt (z. B. alle N Speicherzugriffe). Der ist ebenfalls deterministisch. Jedes Ereignis (Thread anlegen, Wechsel, Interrupt, Wecken, Frame) kommt in
 einen Trace mit Prüfsumme. Zwei Läufe müssen dieselbe Prüfsumme ergeben.
 
 **Einzeltests (`recomp/test/test_sched.c`, ohne Spielcode):**
