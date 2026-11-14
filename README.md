@@ -25,6 +25,17 @@ card, the ARM7 co-processor, …).
 
 **This repository contains no game data.** You need your own copy of the game.
 
+### Why there are no downloads
+
+The recompiler translates the game's own machine code from **your** ROM into C, and that is
+compiled into the PC program (`bis_pc.exe`). So the finished program contains the translated
+game code – it is made from the game, not just from this project. This repository only
+contains the translator (recompiler, runtime, launcher), never the result.
+
+That is why everyone needs their own ROM, and why there will be no ready-made game to download.
+If releases come later, they will contain only the tools; the game is then built on your PC
+from your own ROM during setup.
+
 ## Features so far
 
 - Own ARM → C recompiler (`recomp/recomp.py`) working on the output of
@@ -138,7 +149,9 @@ ARM7, graphics, recompiler and copy protection.
 - [x] Title screen and file select screen
 - [x] Launcher
 - [x] Start a new game (opening scene in Toad Town)
+- [x] RecompLauncher description (`recomplauncher.json`) for local builds, save files
 - [ ] Touch screen via mouse, controller support
+- [ ] Setup that builds the game on the player's PC from their own ROM (releases with tools only)
 - [ ] Sound
 - [ ] Remaining 3D features (shadows, fog, edge marking, anti-aliasing)
 - [ ] First playable version
