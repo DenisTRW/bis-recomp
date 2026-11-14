@@ -119,6 +119,21 @@ reproduzierbar.
     (`func_ov003_0206b788`), bleibt aber bis Frame 6000 abgedunkelt. **Nächster Schritt:**
     herausfinden, was das Einblenden auslöst (Kandidaten: Sound-Antworten des ARM7 über PXI,
     `VCOUNT`-Nachbildung „pro Lesezugriff“).
+  - Weitere Eingrenzung (Stand danach):
+    - Die alte Szene blendet bis Frame 2231 auf `0x8010` ab (VBlank-Handler, `lr=0x0206abc4`);
+      danach schreibt **niemand** mehr MASTER_BRIGHT – die neue Szene startet ihr Einblenden nie.
+    - Der Streaming-Lader ist fertig: Warteschlange leer (`0x021e29cc+0xac = 0`), keine
+      `FSFile` beschäftigt, ab Frame 2267 keine Kartenzugriffe mehr. Kein Hänger dort.
+    - Hauptschleife der Szene: `func_ov004_020cead8`. Sie wartet bei `.L_020cec58` auf Bit 0
+      von `[0x0212a0c0+0x16]`; das Flag wechselt alle 4 Frames 5 ↔ 6, die Szene läuft also
+      weiter (kein Deadlock), nur im 4-Frame-Takt.
+    - Sound: `SNDSharedWork` liegt bei `0x02060a00`. `playerStatus` (+4) ist immer 0, damit
+      gilt jede gestartete Musik sofort als beendet (`func_0202f44c`). Globale
+      Sequenz-Variablen (`func_0202f370`) werden nach „Start“ nicht gelesen – Warten auf Musik
+      ist damit unwahrscheinlich, aber nicht ausgeschlossen (Ende-Status statt Variable).
+    - Offen: was die Szene zum Einblenden braucht. Nächste Kandidaten: Zustandsmaschine der
+      Szene (`[data_?+0x68]` Bits 0/1 in `func_ov004_020cead8`), der 4-Frame-Takt, und ob
+      ein Skript auf ein Sound-Ende wartet, das nie „läuft“.
   - Neue Hilfen: `BIS_PROFILE_FROM=frame` (Zähler „Häufigste“ ab diesem Frame), der Bericht
     zeigt die zuletzt außerhalb von Interrupts betretene Funktion und deren letzte Lesezugriffe
     (findet Warteschleifen ohne Funktionsaufrufe).
@@ -130,7 +145,7 @@ und Vorgeschichte bzw. Schreibzugriffe mit Frame, `lr`, `sp` und Vorgeschichte. 
 |---|---|
 | `BIS_INPUT="1100:start,1400:a"` | Tasten ab Frame drücken (6 Frames) |
 | `BIS_DUMP="adresse:laenge"` | Speicher am Ende ausgeben |
-| `BIS_RWATCH=adresse` | Lesezugriffe auf ein Wort melden |
+| `BIS_RWATCH=adresse` | Lesezugriffe auf ein Wort melden (ab `BIS_WATCH_FROM`) |
 | `BIS_WATCH_FROM=frame` | Schreib-Watchpoint erst ab diesem Frame |
 | `BIS_LAYERS=1f` | nur diese Ebenen zeichnen (Bit 0-3 BG0-3, Bit 4 Sprites) |
 | `BIS_3D=1` | 3D: Polygon-Zähler, Matrizen, erste Polygone |

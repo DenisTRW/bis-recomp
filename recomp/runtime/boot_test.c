@@ -537,7 +537,10 @@ uint16_t rd16(uint32_t a) {
 }
 static void rwatch_hit(uint32_t a, int size) {
     static int shown;
-    if (shown++ < 20) fprintf(stderr, "  [rwatch] rd%d %08x in %s (Frame %llu, lr=%08x)\n", size * 8, a,
+    static long long from = -1;
+    if (from < 0) from = getenv("BIS_WATCH_FROM") ? atoll(getenv("BIS_WATCH_FROM")) : 0;   /* ab Frame */
+    if ((long long)watch_frames() < from) return;
+    if (shown++ < 40) fprintf(stderr, "  [rwatch] rd%d %08x in %s (Frame %llu, lr=%08x)\n", size * 8, a,
                               fn_name(ring_last()), (unsigned long long)watch_frames(), cpu.r[14]);
 }
 uint32_t rd32(uint32_t a) {
