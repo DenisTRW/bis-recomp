@@ -12,7 +12,8 @@ card, the ARM7 co-processor, …).
 
 > **Status: early work in progress.** The game boots, shows the intro, the title screen and the
 > file select screen (fully rendered, including 3D), and reacts to keyboard input. Starting a new
-> game does not work yet. There is no sound yet.
+> game gets as far as loading the first scene (with the experimental accurate card timing), but
+> the screen stays black for now. There is no sound yet.
 
 **This repository contains no game data.** You need your own copy of the game.
 
@@ -27,7 +28,8 @@ card, the ARM7 co-processor, …).
 - Software 3D renderer (matrix stack, clipping, lighting, all 7 texture formats, alpha, Z/W buffer)
 - SDL3 window at 60 fps with keyboard controls
 - Unit tests for tricky recompiler cases (computed jumps, multi-entry functions, 64-bit division)
-- **Launcher**: checks your ROM, shows screenshots and info, has a settings page and starts the game
+- **Launcher**: checks your ROM, shows your cover and screenshots, game and port info, has a settings
+  page with options for the game, and starts it
 
 ## Supported version
 
@@ -49,15 +51,18 @@ card, the ARM7 co-processor, …).
   game description, information about the port and the controls.
 - **ROM check**: verifies your copy (SHA-1), copies it to where the port expects it and runs the
   one-time setup (extracting the game data).
-- **Settings** (gear icon, top left): window size, start in fullscreen, sharp or smooth pixels, and experimental
-  accurate card timing. They are passed to the game as environment variables
+- **Settings** (gear icon, top left): window size, start in fullscreen, sharp or smooth pixels,
+  experimental accurate card timing, and launcher animations on/off. They are passed to the game as environment variables
   (`BIS_SCALE`, `BIS_FULLSCREEN`, `BIS_FILTER`, `BIS_CARD_DELAY`). Graphics enhancements, audio,
   controller support and the touch screen are listed as planned.
+- **Animations**: the window fades in and builds up step by step, smooth scrolling, sections
+  slide in when scrolled into view, gallery images slide in the direction you browse, and a slow
+  zoom on the cover backdrop.
 
 The cover (`screenshots/bis/cover.jpg` or `.png`) and screenshots are read from
 `screenshots/bis` and are **not part of the repository** – take a photo of your own game case for
-the cover; screenshots come from your own copy of the game (for example frames rendered by the headless build in
-`build/frames`). Game output is written to `build/logs/bis.log`.
+the cover; screenshots come from your own copy of the game (for example frames rendered by the
+headless build in `build/frames`). Game output is written to `build/logs/bis.log`.
 
 Build it with:
 
@@ -69,7 +74,9 @@ It uses the C# compiler and WPF that ship with Windows (.NET Framework 4.x), so 
 The result is `BISLauncher.exe` in the repository root. Texts, ROM details, setup steps and the
 launch command live in `launcher/game.json` (copied next to the executable). Paths are relative
 to the launcher folder, `{rom}` expands to the absolute ROM target path, and arguments that name
-an existing file or folder are passed as absolute paths.
+an existing file or folder are passed as absolute paths. `BISLauncher.exe --snapshot out.png`  
+renders the window to an image (used for the picture above).
+
 ## Building the game
 
 Requirements (placed in `tools/`, not committed):
@@ -122,7 +129,7 @@ ARM7, graphics, recompiler and copy protection.
 - [x] 2D and 3D rendering, SDL window, keyboard input
 - [x] Title screen and file select screen
 - [x] Launcher
-- [ ] Start a new game (card timing during streaming loads)
+- [ ] Start a new game (loading now works with accurate card timing; the first scene stays black)
 - [ ] Touch screen via mouse, controller support
 - [ ] Sound
 - [ ] Remaining 3D features (shadows, fog, edge marking, anti-aliasing)
