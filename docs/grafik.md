@@ -242,6 +242,19 @@ nicht sichtbar: Die Polygone sind entartet, alle gezeigten Ecken haben x = 0 bzw
 (`BIS_3D=1`, Liste 0-7), der letzte Roh-Vertex ist `0 3072 0`. Vermutung: Fehler bei den
 X-Koordinaten in einem Vertex-Befehl oder in der Matrix dieser Szene. Außerdem wirkt der
 Schriftzug „©2009 Nintendo“ rot-weiß zerfasert (Blending/Palette prüfen).
+Stand der Untersuchung: Die Menü-Polygone (Wolken-Streifen) liegen bei y ≈ −11…−13
+(Skalierung 8 × Verschiebung −1,43 aus `MTX_MULT_4x3`). Die einzige jemals geladene
+Projektion ist die Ortho-Matrix aus VBlank 591 (bildet y = 0…12 ab), damit landen sie bei
+y/w ≈ 3,2 und werden weggeclippt. Die Titelszene lädt selbst keine Projektion
+(`BIS_GXMTX=a-b` zeigt nur Matrix-Befehle). Der asynchrone GX-Weg wird hier nicht benutzt.
+Nächster Schritt: Clip-Matrix (`0x04000640`) im echten Spiel (DeSmuME) an derselben Stelle
+auslesen und vergleichen.
+
+Weitere abgeschnittene Funktion behoben: `func_ov012_02074a54` (Sprungtabelle bis
+`0x02076f74`, Größe 0x7a0 → 0x2520). Nicht übersetzte Befehle insgesamt: 959 → 69.
+Prüfsummen der drei Referenzläufe unverändert (der Code läuft dort noch nicht).
+Neue Hilfen: `BIS_GXLOG=n` (alle GX-Befehle eines VBlanks), `BIS_GXMTX=a-b`,
+`BIS_3DTEX=n` (Textur-Slots und Polygone eines VBlanks).
 ## VRAM-Bänke – `recomp/runtime/vram.c`
 
 9 Bänke (A–I) mit eigenem Speicher. Die Zuordnung folgt `VRAMCNT` (`0x04000240–0x04000249`,

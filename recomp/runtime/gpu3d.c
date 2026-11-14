@@ -112,6 +112,7 @@ static int32_t normal[3];                       /* .9 */
 static uint32_t poly_attr, poly_attr_cur, texparam, plttbase;
 static int prim, prim_count;
 static Vtx prim_v[4];
+static unsigned gx_vblanks;                        /* VBlank-Zähler (Fehlersuche) */
 static uint32_t viewport = 0xbfff0000u;          /* x1=0 y1=0 x2=255 y2=191 */
 
 /* Licht */
@@ -173,6 +174,14 @@ static void emit_poly(const Vtx *vs, int n) {
             fprintf(stderr, "\n");
         }
         fprintf(stderr, "  [3d] letzter Vertex roh %d %d %d\n", last_x, last_y, last_z);
+    }
+    static int frame_polys; static unsigned frame_seen = ~0u;
+    if (frame_seen != gx_vblanks) { frame_seen = gx_vblanks; frame_polys = 0; }
+    int frame_dbg = getenv("BIS_3DTEX") && gx_vblanks == (unsigned)atoi(getenv("BIS_3DTEX")) && frame_polys++ < 10;
+    if (frame_dbg) {
+        fprintf(stderr, "  [3df] poly attr %08x tex %08x roh-letzt %d %d %d pos12-15 %d %d %d %d proj0/5/12/13/15 %d %d %d %d %d\n",
+                poly_attr_cur, texparam, last_x, last_y, last_z, pos[12], pos[13], pos[14], pos[15], proj[0], proj[5], proj[12], proj[13], proj[15]);
+        for (int i = 0; i < n; i++) fprintf(stderr, "  [3df]   v%d clip %d %d %d %d\n", i, vs[i].x, vs[i].y, vs[i].z, vs[i].w);
     }
     if (dbg_in <= 4 && getenv("BIS_3D"))
         for (int i = 0; i < n; i++)
@@ -323,8 +332,33 @@ static const int8_t nparams[256] = {
     [0x40] = 1, [0x41] = 0, [0x50] = 1, [0x60] = 1, [0x70] = 3, [0x71] = 2, [0x72] = 1,
 };
 
+/* Fehlersuche: BIS_GXLOG=n gibt alle GX-Befehle des n-ten VBlanks aus (Befehl + Parameter) */
+static long gx_log_frame = -2;
+static void gx_log(uint8_t cmd, const uint32_t *p) {
+    static const uint8_t np[256] = { [0x10]=1,[0x11]=0,[0x12]=1,[0x13]=1,[0x14]=1,[0x15]=0,[0x16]=16,[0x17]=12,[0x18]=16,
+        [0x19]=12,[0x1a]=9,[0x1b]=3,[0x1c]=3,[0x20]=1,[0x21]=1,[0x22]=1,[0x23]=2,[0x24]=1,[0x25]=1,[0x26]=1,[0x27]=1,
+        [0x28]=1,[0x29]=1,[0x2a]=1,[0x2b]=1,[0x30]=1,[0x31]=1,[0x32]=1,[0x33]=1,[0x34]=32,[0x40]=1,[0x41]=0,[0x50]=1,
+        [0x60]=1,[0x70]=3,[0x71]=2,[0x72]=1 };
+    if (gx_log_frame == -2) gx_log_frame = getenv("BIS_GXLOG") ? atol(getenv("BIS_GXLOG")) : -1;
+    if (gx_log_frame >= 0 && cmd == 0x60) fprintf(stderr, "  [gx] VIEWPORT %08x (VBlank %u)\n", p[0], gx_vblanks);   /* immer */
+    {   /* BIS_GXMTX=a-b: nur Matrix-Befehle (0x10-0x1c) in den VBlanks a..b */
+        static long ma = -2, mb = -1;
+        if (ma == -2) { const char *e = getenv("BIS_GXMTX"); ma = -1; if (e) { ma = atol(e); const char *d = strchr(e, '-'); mb = d ? atol(d + 1) : ma; } }
+        if (ma >= 0 && cmd >= 0x10 && cmd <= 0x1c && (long)gx_vblanks >= ma && (long)gx_vblanks <= mb && (cmd != 0x10 || p[0] == 0)) {
+            fprintf(stderr, "  [gxm] V%u mode%u %02x", gx_vblanks, mtx_mode, cmd);
+            for (int i = 0; i < np[cmd]; i++) fprintf(stderr, " %08x", p[i]);
+            fprintf(stderr, "\n");
+        }
+    }
+    if (gx_log_frame < 0 || (long)gx_vblanks != gx_log_frame) return;
+    fprintf(stderr, "  [gx] %02x", cmd);
+    for (int i = 0; i < np[cmd]; i++) fprintf(stderr, " %08x", p[i]);
+    fprintf(stderr, "\n");
+}
+
 static void exec_cmd(uint8_t cmd, const uint32_t *p) {
     cmd_count++;
+    gx_log(cmd, p);
     Mtx m;
     switch (cmd) {
     case 0x10: mtx_mode = p[0] & 3; break;
@@ -724,6 +758,21 @@ static void render_list(int L) {
     if (disp3d & (1u << 5)) flags |= G3D_MISS_AA;
     if (disp3d & (1u << 14)) flags |= G3D_MISS_REARBMP;
     vram_tex_slots(tex_slot, pal_slot);
+    if (getenv("BIS_3DTEX") && npolys[L] && gx_vblanks >= (unsigned)atoi(getenv("BIS_3DTEX"))) {   /* Fehlersuche: Textur-Slots und erste Texturbytes ab VBlank n */
+        static int shown;
+        if (shown++ < 3) {
+            fprintf(stderr, "  [3dtex] Slots tex %d%d%d%d pal %d%d%d%d%d%d\n", !!tex_slot[0], !!tex_slot[1], !!tex_slot[2],
+                    !!tex_slot[3], !!pal_slot[0], !!pal_slot[1], !!pal_slot[2], !!pal_slot[3], !!pal_slot[4], !!pal_slot[5]);
+            for (unsigned i = 0; i < npolys[L] && i < 6; i++) {
+                uint32_t tp = polys[L][i].texp, a = (tp & 0xffff) << 3;
+                unsigned nz = 0;
+                for (uint32_t k = 0; k < 2048; k++) nz += tex8(a + k) != 0;
+                fprintf(stderr, "  [3dtex] poly %u tex %08x addr %05x fmt %u pltt %04x: %u/2048 Bytes ungleich 0, Palette[0..3] %04x %04x %04x %04x\n",
+                        i, tp, a, (tp >> 26) & 7, polys[L][i].pltt, nz, pal16(polys[L][i].pltt << 4), pal16((polys[L][i].pltt << 4) + 2),
+                        pal16((polys[L][i].pltt << 4) + 4), pal16((polys[L][i].pltt << 4) + 6));
+            }
+        }
+    }
     cur_wbuf = list_wbuf[L];
 
     uint32_t cc = r32(0x350);
@@ -754,6 +803,7 @@ static void render_list(int L) {
 }
 
 void gpu3d_vblank(void) {
+    gx_vblanks++;
     /* Liste aus dem vorigen Frame zeichnen (die Hardware rendert sie während dieses Frames) */
     if (pending_valid) { render_list(pending_list); pending_valid = 0; }
     if (swap_pending) {

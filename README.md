@@ -18,6 +18,11 @@ card, the ARM7 co-processor, …).
 > file select screen (fully rendered, including 3D), and reacts to keyboard input. Starting a new
 > game plays the opening scene in Toad Town. There is no sound yet.
 
+> [!NOTE]
+> **Not playable yet – there are no downloads or builds.** This repository only contains the source
+> code of the recompiler, runtime and launcher. It contains no game data and no game code; running it
+> requires your own copy of the game and building everything yourself.
+
 **This repository contains no game data.** You need your own copy of the game.
 
 ## Features so far
