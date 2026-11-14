@@ -1,0 +1,23 @@
+# Original-ROM und alles daraus Extrahierte – NIEMALS committen
+orig/*
+!orig/.gitkeep
+*.nds
+*.srl
+extract/
+assets/
+
+# Build-Ausgaben
+build/
+*.o
+*.elf
+*.map
+
+# Lokale Tools (Compiler, dsd, objdiff, ...)
+tools/*
+!tools/.gitkeep
+
+# Python / Editor
+__pycache__/
+*.pyc
+.vscode/
+.idea/
