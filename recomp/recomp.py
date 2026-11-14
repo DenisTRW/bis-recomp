@@ -119,7 +119,9 @@ class Unsupported(Exception):
 def load_symbols(cfg):
     """Name -> (Adresse, Modul, Art) aus allen symbols.txt."""
     syms = {}
-    pat = re.compile(r"^(\S+) kind:(\w+)(?:\(([^)]*)\))? addr:0x([0-9a-fA-F]+)")
+    # Argumente können verschachtelte Klammern enthalten, z. B. DSProtect-Funktionen:
+    #   kind:function(arm,size=0xe8,dsprot_range=(0x0206416c..0x02064200,0xeb001d7a))
+    pat = re.compile(r"^(\S+) kind:(\w+)(?:\((.*)\))? addr:0x([0-9a-fA-F]+)")
     for f in cfg.rglob("symbols.txt"):
         mod = f.parent.name if f.parent.name.startswith("ov") else (
             "main" if f.parent.name == "arm9" else f.parent.name)
@@ -213,6 +215,34 @@ def read_functions(asm_dir):
 
 FUNC_AT = {}   # (Modul, Adresse) -> Funktionsname, für rohe Sprungziele
 SHARED_ADDR = {}   # Adresse -> Module, die dort eine Funktion haben (Overlays teilen sich Adressen)
+EXTRA_ENTRY = {}   # (Modul, Adresse) -> Funktion, in deren Mitte von außen gesprungen wird
+
+
+def find_extra_entries(funcs, syms):
+    """Sprünge auf Labels in fremden Funktionen (z. B. die 64-Bit-Division 0x02045164
+    mit zweitem Einstieg 0x02045174). Solche Funktionen bekommen eine Variante
+    rc_<name>__at(c, einstieg), die direkt am Label beginnt."""
+    by_mod = defaultdict(list)
+    for f in funcs:
+        by_mod[module_of(f, syms)].append(f)
+    for mod in by_mod:
+        by_mod[mod].sort(key=lambda f: f.addr)
+    for f in funcs:
+        mod = module_of(f, syms)
+        for insn in f.insns:
+            base, _d = parse_mnemonic(insn.mn)
+            if base not in ("b", "bl"):
+                continue
+            m = re.fullmatch(r"\.L_([0-9a-fA-F]{8})", insn.ops.strip())
+            if not m:
+                continue
+            a = int(m.group(1), 16)
+            if f.addr <= a < f.end or (mod, a) in FUNC_AT:
+                continue
+            for g in by_mod[mod]:
+                if g.addr < a < g.end:
+                    EXTRA_ENTRY[(mod, a)] = g.name
+                    break
 
 
 class Translator:
@@ -221,7 +251,8 @@ class Translator:
         self.f = func
         s = syms.get(func.name)
         self.module = s[1] if s else "main"
-        self.targets = set()
+        self.entries = sorted(a for (m, a), n in EXTRA_ENTRY.items() if m == self.module and n == func.name)
+        self.targets = set(self.entries)
         self.todo = Counter()
         self.lines = []
 
@@ -352,7 +383,10 @@ class Translator:
             a = self.label_addr(tgt)
             if a is not None and self.f.addr <= a < self.f.end:
                 return f"goto I_{a:08x};"
-            raise Unsupported(f"Sprungziel {tgt}")
+            owner = EXTRA_ENTRY.get((self.module, a)) if a is not None else None
+            if owner is None:
+                raise Unsupported(f"Sprungziel {tgt}")
+            code = f"{cname(owner)}__at(c, 0x{a:08x}u);"
         if tail:
             return code + " return;"
         return f"c->r[14] = 0x{insn.addr + 4:08x}u; " + code
@@ -397,6 +431,21 @@ class Translator:
                 if isinstance(v, str) and v in self.syms and self.syms[v][2] == "function":
                     return (f"rc_call_indirect(c, {self.reg(ops[0], insn)}); "
                             f"{cname(v)}(c); return;")
+            # Muster "add lr, pc, #n ... bx rN" (DSProtect, ov139): Rücksprung in dieselbe
+            # Funktion. Die letzten Befehle davor dürfen lr nicht mehr ändern.
+            for back in range(1, 5):
+                if idx - back < 0:
+                    break
+                p = self.f.insns[idx - back]
+                pops = split_ops(p.ops)
+                if p.mn == "add" and pops[0].strip() == "lr" and pops[1].strip() == "pc" and pops[2].strip().startswith("#"):
+                    ret = (p.addr + 8 + imm(pops[2])) & 0xFFFFFFFF
+                    if self.f.addr <= ret < self.f.end:
+                        self.targets.add(ret)
+                        return f"rc_call_indirect(c, {self.reg(ops[0], insn)}); goto I_{ret:08x};"
+                    break
+                if pops and pops[0].strip() == "lr" or p.mn.startswith("b"):
+                    break
             return f"rc_call_indirect(c, {self.reg(ops[0], insn)}); return;"
 
         # ---- Datenverarbeitung
@@ -510,11 +559,13 @@ class Translator:
             if ops[1].strip() == "pc" and op in ("add", "sub"):
                 # Ziele über die ganze Funktion: z. B. die Division 0x0204536c springt
                 # bis zu 0x150 Bytes weit in eine ausgerollte Schleife
-                return self.computed_jump(f"({rn} {'+' if op == 'add' else '-'} {o2})", insn, whole=True)
+                # Im ARM-Modus ignoriert die Hardware die unteren 2 Bits des neuen pc
+                # (MI_CpuFillFast mit Länge, die kein Vielfaches von 4 ist)
+                return self.computed_jump(f"(({rn} {'+' if op == 'add' else '-'} {o2}) & ~3u)", insn, whole=True)
             if op in DP_LOGIC and not S:
                 # Verschleierter Sprung (z. B. Kopierschutz-Prüfung 0x0206db20 in ov129):
                 #   eor pc, r1, r2, ror r1   -> Ziel erst zur Laufzeit bekannt
-                return f"rc_call_indirect(c, ({rn} {DP_LOGIC[op]}({o2}))); return;"
+                return f"rc_call_indirect(c, ({rn} {DP_LOGIC[op]}({o2})) & ~3u); return;"
             raise Unsupported("Schreiben auf pc")
         rd = self.reg(rd_name, insn, read=False)
         if op in DP_LOGIC:
@@ -673,8 +724,20 @@ class Translator:
                     self.todo[msg.split(" ")[0] if not isinstance(e, Unsupported) else msg] += 1
                     body.append((insn, [f'RC_TODO("{insn.text}");']))
         self.emit(f"/* {f.name} @ 0x{f.addr:08x} ({f.src}) */")
-        self.emit(f"void {cname(f.name)}(CPU *c) {{")
-        self.emit(f"    RC_ENTER(0x{f.addr:08x}u);")
+        if self.entries:
+            # Zusätzliche Einstiege mitten in der Funktion (von außen angesprungen)
+            self.emit(f"void {cname(f.name)}__at(CPU *c, uint32_t entry);")
+            self.emit(f"void {cname(f.name)}(CPU *c) {{ {cname(f.name)}__at(c, 0x{f.addr:08x}u); }}")
+            self.emit(f"void {cname(f.name)}__at(CPU *c, uint32_t entry) {{")
+            self.emit("    RC_ENTER(entry);")
+            self.emit("    switch (entry) {")
+            for a in self.entries:
+                self.emit(f"    case 0x{a:08x}u: goto I_{a:08x};")
+            self.emit("    default: break;")
+            self.emit("    }")
+        else:
+            self.emit(f"void {cname(f.name)}(CPU *c) {{")
+            self.emit(f"    RC_ENTER(0x{f.addr:08x}u);")
         for item in body:
             if isinstance(item, str):
                 self.emit("    " + item)
@@ -721,6 +784,7 @@ def main():
         if kind == "function":
             FUNC_AT[(mod, addr)] = name
             SHARED_ADDR.setdefault(addr, set()).add(mod)
+    find_extra_entries(funcs, syms)
     hle = load_hle(root / "recomp" / "hle.txt")
     unknown = set(hle) - {f.name for f in funcs}
     if unknown:
@@ -729,6 +793,8 @@ def main():
     if "--out" in sys.argv:
         out = Path(sys.argv[sys.argv.index("--out") + 1])
     out.mkdir(parents=True, exist_ok=True)
+    for old in out.glob("*.c"):   # erzeugte Dateien früherer Läufe (Module können wegfallen)
+        old.unlink()
 
     per_mod = defaultdict(list)
     todo_total = Counter()
@@ -771,6 +837,8 @@ def main():
             for fn, lines in items:
                 fh.write("\n".join(lines) + "\n\n")
                 protos.append(f"void {cname(fn.name)}(CPU *c);")
+                if any(n == fn.name for n in EXTRA_ENTRY.values()):
+                    protos.append(f"void {cname(fn.name)}__at(CPU *c, uint32_t entry);")
                 if fn.name in hle:
                     protos.append(f"void {cname(fn.name).replace('rc_', 'rc_orig_', 1)}(CPU *c);")
                     protos.append(f"void {hle[fn.name][0]}(CPU *c);")

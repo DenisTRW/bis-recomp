@@ -7,8 +7,10 @@
  *   - normale Sprites (nicht affin), 16/256 Farben, 1D- und 2D-Abbildung,
  *     erweiterte Sprite-Paletten, Prioritäten
  *   - Master-Helligkeit (Ein-/Ausblenden)
- * Nicht unterstützt (wird in `missing` gemeldet): affine/erweiterte BGs, 3D-Ebene,
- * affine und Bitmap-Sprites, Fenster, Alpha-Blending, Mosaik, Anzeigemodi 2/3.
+ *   - 3D-Ebene als BG0 von Engine A (Bild aus gpu3d.c, mit 3D-Alpha)
+ *   - Farbeffekte (BLDCNT): Alpha-Blending, Aufhellen/Abdunkeln, halbtransparente Sprites
+ * Nicht unterstützt (wird in `missing` gemeldet): affine/erweiterte BGs,
+ * affine und Bitmap-Sprites, Fenster, Mosaik, Anzeigemodi 2/3.
  * Gezeichnet wird der Zustand am Ende eines Frames, nicht Zeile für Zeile.
  */
 #include <string.h>
@@ -27,7 +29,7 @@ static inline uint32_t to_rgb(uint16_t c) {
 }
 
 /* Ein Pixel einer Ebene: Farbe (BGR555) + Gültigkeit */
-typedef struct { uint16_t color; uint8_t valid, prio; } Px;
+typedef struct { uint16_t color; uint8_t valid, prio, a3d, semi; } Px;   /* a3d: Alpha der 3D-Ebene, semi: halbtransparentes Sprite */
 
 /* ---------------------------------------------------------------- Text-Hintergrund */
 
@@ -100,7 +102,6 @@ static void draw_objs(const Gfx2D *g, int eng, uint32_t dispcnt, Px *layer, unsi
         int mode = (a0 >> 10) & 3;
         if (mode == 3) { *missing |= R2D_MISS_BITMAP_OBJ; continue; }
         if (mode == 2) { *missing |= R2D_MISS_WINDOW; continue; }
-        if (mode == 1) *missing |= R2D_MISS_BLEND;
         int shape = (a0 >> 14) & 3, sz = (a1 >> 14) & 3;
         if (shape == 3) continue;
         int w = obj_w[shape][sz], h = obj_h[shape][sz];
@@ -137,7 +138,7 @@ static void draw_objs(const Gfx2D *g, int eng, uint32_t dispcnt, Px *layer, unsi
                 else if (c256) color = (uint16_t)(pal[ci * 2] | pal[ci * 2 + 1] << 8);
                 else { uint32_t k = palnum * 16 + ci; color = (uint16_t)(pal[k * 2] | pal[k * 2 + 1] << 8); }
                 Px *p = &layer[sy * W + sx];
-                p->color = color; p->valid = 1; p->prio = (uint8_t)prio;
+                p->color = color; p->valid = 1; p->prio = (uint8_t)prio; p->semi = mode == 1;
             }
         }
     }
@@ -146,6 +147,9 @@ static void draw_objs(const Gfx2D *g, int eng, uint32_t dispcnt, Px *layer, unsi
 /* ---------------------------------------------------------------- Zusammensetzen */
 
 static Px layers[5][W * H];   /* BG0..BG3, OBJ */
+
+/* Fehlersuche: Bit n = Ebene n zeichnen (BG0..BG3, Bit 4 = Sprites) */
+unsigned render2d_layer_mask = 0x1f;
 
 void render2d_engine(const Gfx2D *g, int eng, uint32_t *out, int apply_bright, unsigned *missing) {
     const uint8_t *io = g->io + (eng ? 0x1000 : 0);
@@ -162,26 +166,68 @@ void render2d_engine(const Gfx2D *g, int eng, uint32_t *out, int apply_bright, u
     memset(layers, 0, sizeof layers);
     int bgmode = dispcnt & 7;
     for (int n = 0; n < 4; n++) {
-        if (!((dispcnt >> (8 + n)) & 1)) continue;
-        if (n == 0 && !eng && (dispcnt & 8)) { *missing |= R2D_MISS_3D; continue; }
+        if (!((dispcnt >> (8 + n)) & 1) || !((render2d_layer_mask >> n) & 1)) continue;
+        if (n == 0 && !eng && (dispcnt & 8)) {   /* BG0 = 3D-Bild, horizontal verschiebbar */
+            if (!g->d3) { *missing |= R2D_MISS_3D; continue; }
+            int hofs = (int)(rd16io(io, 0x10) << 23) >> 23;
+            uint8_t prio = rd16io(io, 0x08) & 3;
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++) {
+                    int sx = x + hofs;
+                    if (sx < 0 || sx >= W) continue;
+                    const Px3D *s = &g->d3[y * W + sx];
+                    if (!s->alpha) continue;
+                    Px *p = &layers[0][y * W + x];
+                    p->color = s->color; p->valid = 1; p->prio = prio; p->a3d = s->alpha;
+                }
+            continue;
+        }
         int text = n < 2 || (n == 2 && (bgmode == 0 || bgmode == 1 || bgmode == 3)) || (n == 3 && bgmode == 0);
         if (!text) { *missing |= R2D_MISS_AFFINE_BG; continue; }
         if (rd16io(io, 0x08 + 2 * (uint32_t)n) & 0x40) *missing |= R2D_MISS_MOSAIC;
         draw_text_bg(g, eng, n, dispcnt, layers[n]);
     }
-    if ((dispcnt >> 12) & 1) draw_objs(g, eng, dispcnt, layers[4], missing);
-    if (rd16io(io, 0x50) & 0x3fff) *missing |= R2D_MISS_BLEND;
+    if (((dispcnt >> 12) & 1) && (render2d_layer_mask & 0x10)) draw_objs(g, eng, dispcnt, layers[4], missing);
+    /* Farbeffekte (BLDCNT): Bits 0-5 erstes Ziel (BG0-3, OBJ, Hintergrund), Bits 8-13 zweites */
+    uint16_t bld = rd16io(io, 0x50), bla = rd16io(io, 0x52);
+    int bmode = (bld >> 6) & 3;
+    int eva = bla & 31, evb = (bla >> 8) & 31, evy = rd16io(io, 0x54) & 31;
+    if (eva > 16) eva = 16;
+    if (evb > 16) evb = 16;
+    if (evy > 16) evy = 16;
 
-    /* Pro Pixel: kleinste Priorität gewinnt, bei Gleichstand Sprite vor BG, BG0 vor BG3 */
+    /* Pro Pixel: kleinste Priorität gewinnt, bei Gleichstand Sprite vor BG, BG0 vor BG3.
+     * Für das Blending zählen die oberste und die zweitoberste Ebene (5 = Hintergrundfarbe). */
     uint16_t mb = rd16io(io, 0x6c);
     int bright_mode = (mb >> 14) & 3, factor = mb & 31;
     if (factor > 16) factor = 16;
     for (int i = 0; i < W * H; i++) {
-        uint16_t c = backdrop;
-        int best = 4;
-        if (layers[4][i].valid) { best = layers[4][i].prio; c = layers[4][i].color; }
-        for (int n = 0; n < 4; n++) {
-            if (layers[n][i].valid && layers[n][i].prio < best) { best = layers[n][i].prio; c = layers[n][i].color; }
+        int top = 5, sec = 5, rtop = 1000, rsec = 1000;
+        for (int n = 0; n < 5; n++) {
+            const Px *p = &layers[n][i];
+            if (!p->valid) continue;
+            int rank = p->prio * 8 + (n == 4 ? 0 : 1 + n);
+            if (rank < rtop) { sec = top; rsec = rtop; top = n; rtop = rank; }
+            else if (rank < rsec) { sec = n; rsec = rank; }
+        }
+        uint16_t c1 = top == 5 ? backdrop : layers[top][i].color;
+        uint16_t c2 = sec == 5 ? backdrop : layers[sec][i].color;
+        int t1 = (bld >> top) & 1, t2 = (bld >> (8 + sec)) & 1;
+        int ea = -1, eb = 0;   /* Gewichte für Alpha-Blending (von 16) */
+        if (top == 4 && layers[4][i].semi && t2) { ea = eva; eb = evb; }
+        else if (top == 0 && layers[0][i].a3d && layers[0][i].a3d < 31 && t2) {
+            ea = layers[0][i].a3d + 1; eb = 32 - ea; ea /= 2; eb /= 2;   /* 3D-Alpha statt EVA/EVB */
+        }
+        else if (bmode == 1 && t1 && t2) { ea = eva; eb = evb; }
+        uint16_t c = c1;
+        if (ea >= 0) {
+            int r = ((c1 & 31) * ea + (c2 & 31) * eb) / 16, gg = (((c1 >> 5) & 31) * ea + ((c2 >> 5) & 31) * eb) / 16,
+                b = (((c1 >> 10) & 31) * ea + ((c2 >> 10) & 31) * eb) / 16;
+            c = (uint16_t)((r > 31 ? 31 : r) | (gg > 31 ? 31 : gg) << 5 | (b > 31 ? 31 : b) << 10);
+        } else if ((bmode == 2 || bmode == 3) && t1) {
+            int ch[3] = { c1 & 31, (c1 >> 5) & 31, (c1 >> 10) & 31 };
+            for (int k = 0; k < 3; k++) ch[k] += bmode == 2 ? (31 - ch[k]) * evy / 16 : -(ch[k] * evy / 16);
+            c = (uint16_t)(ch[0] | ch[1] << 5 | ch[2] << 10);
         }
         uint32_t rgb = to_rgb(c);
         if (apply_bright && bright_mode && factor) {

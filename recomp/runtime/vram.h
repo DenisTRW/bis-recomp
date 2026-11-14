@@ -13,3 +13,7 @@ uint8_t vram_bg_read8(int eng, uint32_t off);           /* BG-Speicher, Offset a
 uint8_t vram_obj_read8(int eng, uint32_t off);          /* Sprite-Speicher */
 uint16_t vram_bg_extpal(int eng, int slot, uint32_t i); /* erweiterte BG-Palette: Slot 0-3, Farbe i */
 uint16_t vram_obj_extpal(int eng, uint32_t i);          /* erweiterte Sprite-Palette */
+
+/* Sicht der 3D-Engine: Textur-Slots (4 x 128 KB) und Textur-Paletten-Slots (6 x 16 KB).
+ * NULL = keine Bank zugeordnet. Ein Slot liegt immer ganz in einer Bank. */
+void vram_tex_slots(uint8_t *tex[4], uint8_t *pal[6]);

@@ -66,6 +66,14 @@ ARM9-Variable `0x020624e0`) vom eigenen Zähler abweicht, und wartet sonst mit
 Zähler negativ, und das Spiel verbrauchte pro Frame Millionen Aufrufe in der Warteschleife
 (Faktor ~70 langsamer).
 
+## Weitere Aufgaben des ARM7
+
+| Was | Ersatz | Kategorie |
+|---|---|---|
+| VBlank-Zähler `0x027FFC3C` jedes Frame erhöhen | in `vblank()`. Ohne ihn lief die Sound-Verwaltung (NNS) nie, Soundeffekt-Handles wurden nicht frei, und die Dateiauswahl endete nicht | ORIGINAL |
+| X/Y-Tasten `0x027FFFA8` | in `vblank()` | ORIGINAL |
+| WLAN-MAC-Adresse `0x027FFCF4` (Firmware) | feste Adresse, siehe [`kopierschutz.md`](kopierschutz.md) | SIMULIERT |
+
 ## Spielkarte (ROM-Bus) – `recomp/runtime/card.c`
 
 Das SDK liest ROM-Daten **direkt** über die Karten-Register, nicht über den ARM7:

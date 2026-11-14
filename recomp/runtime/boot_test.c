@@ -26,6 +26,7 @@
 #include "card.h"
 #include "vram.h"
 #include "render2d.h"
+#include "gpu3d.h"
 #include "png.h"
 #ifdef PLATFORM_SDL
 #include "frontend.h"
@@ -146,6 +147,10 @@ static void hw_div(void) {
     if (den == 0) { q = num < 0 ? 1 : -1; r = num; }
     else if (num == INT64_MIN && den == -1) { q = num; r = 0; }
     else { q = num / den; r = num % den; }
+    if (getenv("BIS_DIV") && (q > 0x40000000ll || q < -0x40000000ll)) {
+        static int shown;
+        if (shown++ < 30) fprintf(stderr, "  [div] Modus %u: %lld / %lld = %lld  (DIVCNT %04x)\n", cnt, (long long)num, (long long)den, (long long)q, io16(0x280));
+    }
     set_io32(0x2a0, (uint32_t)q); set_io32(0x2a4, (uint32_t)((uint64_t)q >> 32));
     set_io32(0x2a8, (uint32_t)r); set_io32(0x2ac, (uint32_t)((uint64_t)r >> 32));
 }
@@ -162,17 +167,35 @@ static void hw_sqrt(void) {
 }
 
 static uint64_t dma_count;
+static void dma_copy(int ch);
+static uint64_t watch_frames(void);
+
+/* Start-Zeitpunkt (Bits 27-29): 0 sofort, 1 VBlank, 2 HBlank, 5 Karte, 7 GX-FIFO */
 static void dma_run(int ch) {
-    uint32_t base = 0xb0 + ch * 12;
-    uint32_t src = io32(base), dst = io32(base + 4), cnt = io32(base + 8);
+    uint32_t cnt = io32(0xb0 + ch * 12 + 8);
     if (!(cnt & 0x80000000u)) return;
     uint32_t timing = (cnt >> 27) & 7;
-    if (timing != 0) {         /* nur "sofort" wird ausgeführt */
-        HLE(FEHLT, "DMA mit Start bei VBlank/HBlank/Karte/GX-FIFO");
+    if (timing == 0) { HLE(ORIGINAL, "DMA sofort"); dma_copy(ch); return; }
+    if (timing == 7) {
+        /* Hardware: Blöcke zu 112 Worten, sobald die GX-FIFO halb leer ist. Unsere
+         * Geometrie-Engine nimmt alles sofort an, also läuft der DMA am Stück. */
+        HLE(SIMULIERT, "DMA in die GX-FIFO: am Stueck statt in Bloecken");
+        dma_copy(ch);
         return;
     }
-    HLE(ORIGINAL, "DMA sofort");
+    if (timing == 1 || timing == 5) return;   /* VBlank: in vblank(), Karte: dma_card() */
+    HLE(FEHLT, "DMA mit Start bei HBlank/Hauptbildschirm/Hauptspeicher-Anzeige");
+}
+
+static void dma_copy(int ch) {
+    uint32_t base = 0xb0 + ch * 12;
+    uint32_t src = io32(base), dst = io32(base + 4), cnt = io32(base + 8);
     uint32_t n = cnt & 0x1fffff; if (!n) n = 0x200000;
+    if (getenv("BIS_DMALOG")) {
+        static int shown;
+        if (shown++ < 40) fprintf(stderr, "  [dma] Kanal %d: %08x -> %08x, %u x %d Bytes, CNT %08x (Frame %llu)\n", ch, src, dst, n,
+                                  (cnt >> 26) & 1 ? 4 : 2, cnt, (unsigned long long)watch_frames());
+    }
     int w32 = (cnt >> 26) & 1;
     int dctl = (cnt >> 21) & 3, sctl = (cnt >> 23) & 3;
     int step = w32 ? 4 : 2;
@@ -182,7 +205,15 @@ static void dma_run(int ch) {
         if (dctl == 0 || dctl == 3) dst += step; else if (dctl == 1) dst -= step;
     }
     dma_count++;
-    set_io32(base + 8, cnt & ~0x80000000u);
+    /* Repeat (Bit 25) bei VBlank-DMA: bleibt aktiv, startet beim nächsten VBlank erneut */
+    if (!(((cnt >> 27) & 7) == 1 && ((cnt >> 25) & 1))) set_io32(base + 8, cnt & ~0x80000000u);
+}
+
+static void dma_vblank(void) {
+    for (int ch = 0; ch < 4; ch++) {
+        uint32_t cnt = io32(0xb0 + (uint32_t)ch * 12 + 8);
+        if ((cnt & 0x80000000u) && ((cnt >> 27) & 7) == 1) { HLE(ORIGINAL, "DMA bei VBlank"); dma_copy(ch); }
+    }
 }
 
 /* DMA mit Start "Karte" (ARM9-Timing 5): kopiert vom Datenport, solange die
@@ -262,6 +293,7 @@ static uint32_t io_read_inner(uint32_t a, int size) {
     case 0x280: case 0x2b0: io[off + 1] &= 0x7f; break; /* Divider/Sqrt nie beschäftigt */
     case 0x1a4: case 0x1a6: set_io32(0x1a4, card_read_romctrl()); break;
     }
+    if (off >= 0x600 && off < 0x6a4) { gpu3d_regs(); HLE(ORIGINAL, "3D: Status und Testergebnisse lesen"); }
     if (size == 1) return io[off];
     if (size == 2) return io16(off & ~1u);
     return io32(off & ~3u);
@@ -281,7 +313,12 @@ static void io_write_inner(uint32_t a, uint32_t v, int size) {
     }
     if ((off >= 0x290 && off < 0x2a0) || off == 0x280) HLE(ORIGINAL, "Hardware-Divider");
     if ((off >= 0x2b8 && off < 0x2c0) || off == 0x2b0) HLE(ORIGINAL, "Hardware-Wurzel");
-    if (off >= 0x400 && off < 0x700) HLE(FEHLT, "3D-Grafik (GX-Befehle)");
+    if (off >= 0x400 && off < 0x600) {
+        if (size == 4) { HLE(ORIGINAL, "3D: GX-Befehle (Geometrie-Engine)"); gpu3d_write(off, v); }
+        else HLE(FEHLT, "3D: GX-Befehl mit 8/16-Bit-Zugriff");
+        return;
+    }
+    if ((off & ~3u) == 0x600 && off + (uint32_t)size > 0x601 && ((size == 1 ? v << 8 : v) & 0x8000)) gpu3d_ack_error();
     if (off == 0x214 && size >= 2) {                /* IF: 1 schreiben = löschen */
         uint32_t cur = io32(0x214);
         set_io32(0x214, cur & ~(size == 4 ? v : (v & 0xffff)));
@@ -374,28 +411,42 @@ static uint32_t ctx_addr;   /* optional: Funktion, deren Vorgeschichte/Argumente
 static uint32_t ring_last(void);
 static const char *fn_name(uint32_t addr);
 static uint64_t watch_frames(void);
+static uint32_t ring[64];      /* (vorläufige Definition, siehe unten) */
+static unsigned ring_pos;
 static void watch(uint32_t a, uint32_t v, int size) {
     static int shown;
-    if (a + (uint32_t)size <= watch_lo || a >= watch_hi || shown++ >= 4000) return;
-    fprintf(stderr, "  [watch] wr%d %08x = %08x  in %s  (Frame %llu, lr=%08x sp=%08x)\n", size * 8, a, v,
+    static long long from = -1;
+    if (from < 0) from = getenv("BIS_WATCH_FROM") ? atoll(getenv("BIS_WATCH_FROM")) : 0;   /* ab Frame */
+    if (a + (uint32_t)size <= watch_lo || a >= watch_hi || (long long)watch_frames() < from || shown++ >= 4000) return;
+    fprintf(stderr, "  [watch] wr%d %08x = %08x  in %s  (Frame %llu, lr=%08x sp=%08x)  davor:", size * 8, a, v,
             fn_name(ring_last()), (unsigned long long)watch_frames(), cpu.r[14], cpu.r[13]);
+    for (int i = 5; i >= 2; i--) fprintf(stderr, " %s", fn_name(ring[(ring_pos - i) & 63]));
+    fprintf(stderr, "\n");
 }
 #define WATCH(a, v, s) do { if (watch_hi) watch(a, v, s); } while (0)
 
+static uint32_t rwatch_addr;   /* Fehlersuche: BIS_RWATCH=adresse (Lesezugriffe auf dieses Wort) */
+static void rwatch_hit(uint32_t a, int size);
+#define RWATCH(a, s) do { if (rwatch_addr && ((a) & ~3u) == rwatch_addr) rwatch_hit(a, s); } while (0)
 uint8_t rd8(uint32_t a) {
-    BUDGET(); POLL_IRQ();
+    BUDGET(); POLL_IRQ(); RWATCH(a, 1);
     uint8_t *p = ptr(a); if (p) return *p;
     if ((a >> 24) == 4) return (uint8_t)io_read(a, 1);
     unmapped("rd8", a); return 0;
 }
 uint16_t rd16(uint32_t a) {
-    BUDGET(); POLL_IRQ(); a &= ~1u;
+    BUDGET(); POLL_IRQ(); RWATCH(a, 2); a &= ~1u;
     uint8_t *p = ptr(a); if (p) return (uint16_t)(p[0] | p[1] << 8);
     if ((a >> 24) == 4) return (uint16_t)io_read(a, 2);
     unmapped("rd16", a); return 0;
 }
+static void rwatch_hit(uint32_t a, int size) {
+    static int shown;
+    if (shown++ < 20) fprintf(stderr, "  [rwatch] rd%d %08x in %s (Frame %llu, lr=%08x)\n", size * 8, a,
+                              fn_name(ring_last()), (unsigned long long)watch_frames(), cpu.r[14]);
+}
 uint32_t rd32(uint32_t a) {
-    BUDGET(); POLL_IRQ();
+    BUDGET(); POLL_IRQ(); RWATCH(a, 4);
     uint32_t rot = (a & 3) * 8; a &= ~3u;
     uint32_t v;
     uint8_t *p = ptr(a);
@@ -595,7 +646,7 @@ static uint64_t dump_every = 100;
 static void dump_frame(const char *tag) {
     static uint32_t top[256 * 192], bottom[256 * 192], both[256 * 384];
     static int warned;
-    Gfx2D g = { io, pal, oam };
+    Gfx2D g = { io, pal, oam, gpu3d_frame() };
     unsigned missing = 0;
     int a_on_top = (io16(0x304) >> 15) & 1;
     render2d_engine(&g, a_on_top ? 0 : 1, top, 1, &missing);
@@ -610,7 +661,13 @@ static void dump_frame(const char *tag) {
         "Renderer: affine Sprites", "Renderer: Bitmap-Sprites", "Renderer: Fenster",
         "Renderer: Alpha-Blending", "Renderer: Anzeigemodus 2/3 (VRAM/Hauptspeicher)", "Renderer: Mosaik" };
     for (int i = 0; i < 8; i++) if (missing & (1u << i)) HLE(FEHLT, miss_name[i]);
-    HLE(ORIGINAL, "Renderer: Text-Hintergruende, Sprites, Paletten, Helligkeit");
+    HLE(ORIGINAL, "Renderer: Text-Hintergruende, Sprites, Paletten, Helligkeit, Blending");
+    static const char *const g3d_name[] = {
+        "3D: Schatten-Polygone", "3D: Nebel", "3D: Kantenmarkierung", "3D: Anti-Aliasing",
+        "3D: Texturkoordinaten aus Normale/Vertex (Skalierung ungeprueft)", "3D: Rear-Plane-Bitmap",
+        "3D: Box-Test (meldet immer sichtbar)", "3D: Polygon-/Vertex-Speicher voll" };
+    unsigned gf = gpu3d_flags();
+    for (int i = 0; i < 8; i++) if (gf & (1u << i)) HLE(i == 6 ? SIMULIERT : FEHLT, g3d_name[i]);
 }
 
 void platform_idle(CPU *c) {
@@ -637,6 +694,8 @@ static struct { uint64_t frame; uint16_t keybit; int xy; } script[64];
 static int script_n;
 
 static void script_load(void) {
+    if (getenv("BIS_RWATCH")) rwatch_addr = (uint32_t)strtoul(getenv("BIS_RWATCH"), NULL, 16) & ~3u;
+    if (getenv("BIS_LAYERS")) render2d_layer_mask = (unsigned)strtoul(getenv("BIS_LAYERS"), NULL, 16);
     const char *s = getenv("BIS_INPUT");
     static const struct { const char *name; uint16_t bit; int xy; } names[] = {
         { "a", 1 << 0, 0 }, { "b", 1 << 1, 0 }, { "select", 1 << 2, 0 }, { "start", 1 << 3, 0 },
@@ -668,6 +727,10 @@ static void script_apply(void) {
 static void vblank(CPU *c) {
     sched_trace(TR_TICK, (uint32_t)frames, 0);
     frames++;
+    platform_inhibit_irq++;
+    gpu3d_vblank();     /* 3D: Liste des vorigen Frames zeichnen, neue übernehmen */
+    dma_vblank();
+    platform_inhibit_irq--;
 #ifndef PLATFORM_SDL
     script_apply();
 #endif
@@ -675,7 +738,7 @@ static void vblank(CPU *c) {
     {
         /* Echtzeit: Bild zeigen, Tastatur lesen, auf 60 Bilder/s bremsen */
         static uint32_t top[256 * 192], bottom[256 * 192];
-        Gfx2D g = { io, pal, oam };
+        Gfx2D g = { io, pal, oam, gpu3d_frame() };
         unsigned missing = 0;
         int a_on_top = (io16(0x304) >> 15) & 1;
         platform_inhibit_irq++;
@@ -692,6 +755,12 @@ static void vblank(CPU *c) {
     {
         uint8_t *xy = ptr(HW_BUTTON_XY_BUF);
         xy[0] = (uint8_t)keys_xy; xy[1] = (uint8_t)(keys_xy >> 8);
+        /* ARM7-Ersatz: VBlank-Zähler im Systembereich (0x027FFC3C). Die Frame-Funktion
+         * 0x01ff8d18 ruft daraus pro vergangenem Frame die Sound-Verwaltung (NNS) auf. */
+        uint8_t *vc = ptr(0x027ffc3cu);
+        uint32_t n = (vc[0] | vc[1] << 8 | vc[2] << 16 | (uint32_t)vc[3] << 24) + 1;
+        vc[0] = (uint8_t)n; vc[1] = (uint8_t)(n >> 8); vc[2] = (uint8_t)(n >> 16); vc[3] = (uint8_t)(n >> 24);
+        HLE(ORIGINAL, "ARM7: VBlank-Zaehler im Systembereich (0x027FFC3C)");
     }
     if (dump_every && frames % dump_every == 0) {
         char tag[32];
@@ -975,6 +1044,20 @@ static void report(void) {
         for (unsigned i = 0; i < sizeof pal; i++) nz_pal += pal[i] != 0;
         for (unsigned i = 0; i < sizeof oam; i++) nz_oam += oam[i] != 0;
         printf("  Nicht-Null-Bytes: Paletten %u / %u, OAM %u\n", nz_pal, (unsigned)sizeof pal, nz_oam);
+        {
+            unsigned gp, gv; uint64_t gc;
+            gpu3d_stats(&gp, &gv, &gc);
+            if (getenv("BIS_3D")) gpu3d_debug();
+            printf("  3D: letztes Bild %u Polygone, %u Vertices; %llu GX-Befehle gesamt; DISP3DCNT %04x CLEAR %08x/%04x\n",
+                   gp, gv, (unsigned long long)gc, io16(0x60), io32(0x350), io16(0x354));
+        }
+        for (int e = 0; e < 2; e++) {
+            uint32_t b = e ? 0x1000 : 0;
+            printf("  Engine %c: BGCNT %04x %04x %04x %04x  BLDCNT %04x BLDALPHA %04x BLDY %04x"
+                   "  WININ %04x WINOUT %04x  Hintergrundfarbe %04x\n", e ? 'B' : 'A',
+                   io16(b + 8), io16(b + 10), io16(b + 12), io16(b + 14), io16(b + 0x50), io16(b + 0x52),
+                   io16(b + 0x54), io16(b + 0x48), io16(b + 0x4a), pal[e ? 0x400 : 0] | pal[(e ? 0x400 : 0) + 1] << 8);
+        }
     }
 
     printf("\nIn Warteschleifen unterbrochen (zuletzt betretene Funktion):\n");
@@ -1040,6 +1123,7 @@ int main(int argc, char **argv) {
     load_file(dir, "arm9/itcm.bin", itcm, sizeof itcm);
     load_file(dir, "arm9/dtcm.bin", dtcm, sizeof dtcm);
     load_overlays(dir);
+    gpu3d_init(io);
 
     /* Was die Firmware vor dem Spielstart macht: ROM-Header nach 0x027FFE00,
      * Chip-ID der Karte, Boot-Typ "normales Modul" */
@@ -1051,6 +1135,14 @@ int main(int argc, char **argv) {
     wr32(0x027ffc00u, card_chip_id());
     wr16(0x027ffc40u, 1);
     HLE(ORIGINAL, "Firmware: ROM-Header, Chip-ID und Boot-Typ im Systembereich");
+    /* WLAN-MAC-Adresse der Konsole (0x027FFCF4). Jedes DS hat eine eigene; der
+     * Kopierschutz (DSProtect, ov138) wertet 00:00:00:00:00:00 und eine bekannte
+     * Emulator-Adresse als Kopie und schaltet dann die Tasten in der Dateiauswahl ab. */
+    {
+        static const uint8_t mac[6] = { 0x00, 0x09, 0xbf, 0x5a, 0x3c, 0x71 };   /* Nintendo-OUI, frei gewählt */
+        for (int i = 0; i < 6; i++) wr8(0x027ffcf4u + (uint32_t)i, mac[i]);
+        HLE(SIMULIERT, "Firmware: WLAN-MAC-Adresse (feste, frei gewaehlte Adresse)");
+    }
 
     /* Was Entry an Hardware-Einstellungen macht */
     wr32(IRQ_HANDLER_PTR, 0x01ff8d70u);   /* OS-Interrupt-Handler im ITCM */

@@ -114,6 +114,11 @@ uint16_t vram_bg_extpal(int eng, int slot, uint32_t i) {
     return p ? (uint16_t)(p[0] | p[1] << 8) : 0;
 }
 
+void vram_tex_slots(uint8_t *tex[4], uint8_t *pal[6]) {
+    for (int s = 0; s < 4; s++) tex[s] = region_ptr(R_TEX, (uint32_t)s * 0x20000u);
+    for (int s = 0; s < 6; s++) pal[s] = region_ptr(R_TEXPAL, (uint32_t)s * 0x4000u);
+}
+
 uint16_t vram_obj_extpal(int eng, uint32_t i) {
     uint32_t off = (i & 0xfff) * 2;
     uint8_t *p = region_ptr(eng ? R_B_OBJEXT : R_A_OBJEXT, off);

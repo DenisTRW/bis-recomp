@@ -69,10 +69,12 @@ Lege den ROM als `orig/baserom.nds` ab (wird von Git ignoriert).
 - [x] Division und Rückwärts-Kopie: berechnete Sprünge über die ganze Funktion
 - [x] Absturz nach dem Titelbildschirm: Aufrufe an geteilte Overlay-Adressen und `eor pc`
       → **Dateiauswahl erreichbar**
-- [ ] Unterer Bildschirm der Dateiauswahl (bleibt leer)
-- [ ] 3D-Renderer (Anzeige A nutzt BG0 als 3D-Ebene)
+- [x] **3D-Renderer** (Software, eigene Umsetzung) und Alpha-Blending → Dateiauswahl sichtbar
+- [x] Sprünge mitten in Funktionen (64-Bit-Division `0x02045xxx`): mehrere Einstiege
+- [x] Kopierschutz DSProtect besteht wie auf echter Hardware, selbstmodifizierender Code
+      im ITCM → **Dateiauswahl bedienbar** → [`docs/kopierschutz.md`](docs/kopierschutz.md)
+- [ ] Nach „Neues Spiel“: Bild schwarz, alle Threads warten
 - [ ] ARM7-Ersatz für Sound (Kanal 7)
-- [ ] Sprünge mitten in Funktionen (`0x02045xxx`)
 
 ### Phase 3: Plattform-Schicht (SDL + OpenGL)
 

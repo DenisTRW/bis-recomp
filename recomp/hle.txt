@@ -13,3 +13,4 @@ OS_SaveContext              hle_OS_SaveContext              ORIGINAL   Kontext s
 OS_LoadContext              hle_OS_LoadContext              ORIGINAL   Wechsel zum Fiber des Ziel-Threads (neu: Start aus dem Kontext)
 OS_SelectThread             hle_OS_SelectThread             SIMULIERT  Original; kein Thread bereit -> Leerlauf-Frame, neu waehlen
 OS_IrqHandler_ThreadSwitch  hle_OS_IrqHandler_ThreadSwitch  SIMULIERT  IRQ-Queue wecken wie Original, Wechsel erst am sicheren Punkt
+func_01ff8d18               hle_itcm_01ff8d18               ORIGINAL   Selbstmodifizierend (DSProtect): fuehrt aus, was gerade im ITCM steht (siehe smc.c)

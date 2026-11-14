@@ -51,12 +51,31 @@ reproduzierbar.
   das falsche Overlay (Pfad-Tabelle aus ov001 statt ov127 → Datei nie geöffnet), und ein
   verschleierter Sprung `eor pc, …` in ov129 fiel in die nächste Funktion durch
   (→ [`recomp.md`](recomp.md)).
-- **Nächste Hürde:** Der untere Bildschirm der Dateiauswahl bleibt leer (türkis), dort
-  liegen vermutlich die Spielstände. Weiterdrücken mit A ändert nichts.
+- Der untere Bildschirm der Dateiauswahl ist komplett **3D** (BG0 von Engine A; BG1/BG2 und
+  Sprites sind dort leer). Seit dem 3D-Renderer sind die Spielstand-Felder und
+  „Choose a save file.“ zu sehen.
+
+## Stand Dateiauswahl (14.11.2026)
+
+- Dateiauswahl sichtbar **und bedienbar**: Rechts/Links bewegt die Hand, A wählt ein Feld
+  („Start / Cancel“). Dafür waren nötig: 3D-Renderer, 64-Bit-Division mit mehreren
+  Einstiegen (Projektionsmatrix), und der Kopierschutz musste durchlaufen
+  (→ [`kopierschutz.md`](kopierschutz.md)).
+- Nach „Start“ wechselt die Szene (Sound-Verwaltung läuft jetzt dank VBlank-Zähler), danach
+  bleibt das Bild **schwarz**: VRAM-Bänke aus, alle Threads warten. **Nächste Hürde.**
 
 Fehlersuche: `boot_test.exe … [funktion_hex] [adresse:laenge]` zeigt Argumente samt Frame
-und Vorgeschichte bzw. Schreibzugriffe mit Frame, `lr` und `sp`. `BIS_DUMP="adresse:laenge"`
-gibt am Ende Speicher aus.
+und Vorgeschichte bzw. Schreibzugriffe mit Frame, `lr`, `sp` und Vorgeschichte. Umgebungsvariablen:
+
+| Variable | Wirkung |
+|---|---|
+| `BIS_INPUT="1100:start,1400:a"` | Tasten ab Frame drücken (6 Frames) |
+| `BIS_DUMP="adresse:laenge"` | Speicher am Ende ausgeben |
+| `BIS_RWATCH=adresse` | Lesezugriffe auf ein Wort melden |
+| `BIS_WATCH_FROM=frame` | Schreib-Watchpoint erst ab diesem Frame |
+| `BIS_LAYERS=1f` | nur diese Ebenen zeichnen (Bit 0-3 BG0-3, Bit 4 Sprites) |
+| `BIS_3D=1` | 3D: Polygon-Zähler, Matrizen, erste Polygone |
+| `BIS_DMALOG=1` / `BIS_DIV=1` | DMA-Übertragungen / auffällige Divisionen protokollieren |
 
 ## VRAM-Bänke – `recomp/runtime/vram.c`
 
@@ -80,10 +99,31 @@ Zeichnet den Zustand am Frame-Ende (noch nicht Zeile für Zeile).
 | Normale Sprites: 16/256 Farben, 1D/2D, erweiterte Paletten, Prioritäten | ✅ |
 | Master-Helligkeit (Ein-/Ausblenden) | ✅ |
 | Affine/erweiterte Hintergründe | FEHLT |
-| 3D-Ebene (BG0 von Engine A) | FEHLT – braucht 3D-Renderer |
-| Affine Sprites, Bitmap-Sprites, Fenster, Alpha-Blending, Mosaik | FEHLT |
+| 3D-Ebene (BG0 von Engine A, horizontal verschiebbar, 3D-Alpha) | ✅ |
+| Farbeffekte: Alpha-Blending, Aufhellen/Abdunkeln, halbtransparente Sprites | ✅ |
+| Affine Sprites, Bitmap-Sprites, Fenster, Mosaik | FEHLT |
 | Anzeigemodi 2/3 (VRAM-/Hauptspeicher-Anzeige) | FEHLT |
 
 Was beim Zeichnen übersprungen wird, steht im HLE-Bericht als `FEHLT Renderer: …`.
 
 `recomp/runtime/png.c`: PNG ohne externe Bibliothek (unkomprimierte Deflate-Blöcke).
+
+## 3D-Renderer – `recomp/runtime/gpu3d.c`
+
+Eigene Software-Umsetzung nach GBATEK. Befehle kommen über die gepackte GX-FIFO
+(`0x04000400`, auch per DMA mit Start „GX-FIFO“) oder die direkten Ports (`0x04000440–5ff`).
+Die bis `SWAP_BUFFERS` gesammelte Liste wird beim nächsten VBlank übernommen und im Frame
+danach gezeichnet (eine Frame Verzögerung wie auf der Hardware).
+
+| Teil | Stand |
+|---|---|
+| Matrix-Befehle, Stapel (Projektion/Position/Richtung/Textur), Ergebnisse lesen | ✅ |
+| Vertex-Formate, Dreiecke/Vierecke/Streifen, Clipping an 6 Ebenen, Culling | ✅ |
+| Licht (4 Lichter, Shininess), Texturkoordinaten-Transformation | ✅ (Normale/Vertex-Quelle ungeprüft) |
+| Texturen: alle 7 Formate inkl. 4x4-komprimiert, Wiederholen/Spiegeln | ✅ |
+| Modulate/Decal/Toon/Highlight, Alpha-Test, Alpha-Blending, Z-/W-Buffer, Drahtgitter | ✅ |
+| Schatten-Polygone, Nebel, Kantenmarkierung, Anti-Aliasing, Rear-Plane-Bitmap | FEHLT |
+| Box-Test | SIMULIERT (immer „sichtbar“) |
+| GXSTAT/FIFO-Zeitverhalten | SIMULIERT (FIFO immer leer, nie beschäftigt) |
+
+Nicht aus fremden Emulatoren übernommen; Rundung und Interpolation sind eigene Näherungen.

@@ -29,3 +29,10 @@ python -I "%ROOT%\recomp\recomp.py" "%ROOT%" --only MI_CpuCopyFast,func_01ff82d8
 gcc -O2 -w -I "%ROOT%\recomp\include" -I "%OUT%\copy" -I "%~dp0." ^
     -o "%OUT%\test_memcopy.exe" "%~dp0test_memcopy.c" "%~dp0harness.c" "%OUT%\copy\functable.c" "%OUT%\copy\itcm.c" || exit /b 1
 "%OUT%\test_memcopy.exe" || exit /b 1
+
+echo.
+echo === 64-Bit-Division (mehrere Einstiege) ===
+python -I "%ROOT%\recomp\recomp.py" "%ROOT%" --only func_02045164,func_02045324,func_0204536c,func_02045578 --out "%OUT%\lldiv" || exit /b 1
+gcc -O2 -w -I "%ROOT%\recomp\include" -I "%OUT%\lldiv" -I "%~dp0." ^
+    -o "%OUT%\test_lldiv.exe" "%~dp0test_lldiv.c" "%~dp0harness.c" "%OUT%\lldiv\functable.c" "%OUT%\lldiv\main.c" || exit /b 1
+"%OUT%\test_lldiv.exe" || exit /b 1

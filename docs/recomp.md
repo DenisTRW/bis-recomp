@@ -119,6 +119,14 @@ die Keimzelle der späteren Plattform-Schicht.
   ov001, obwohl ov127 geladen war.
 - Rechenbefehle mit `pc` als Ziel (`eor pc, r1, r2, ror r1`, verschleierter Sprung in ov129
   `0x0206db20`) werden zu einem indirekten Sprung zur berechneten Adresse.
+- **Mehrere Einstiege:** Springt Code auf ein Label mitten in einer fremden Funktion (64-Bit-
+  Division `0x02045164`/`0x02045174`, `0x02045324` → `0x020451e8`, `0x02045578` →
+  `0x02045580`), bekommt diese Funktion eine Variante `rc_<name>__at(c, einstieg)` mit
+  `switch` auf das Label. Vorher waren das `RC_TODO`s, und die Projektionsmatrizen der
+  3D-Grafik waren kaputt. Test: `recomp/test/test_lldiv.c` (~200 000 Zufallsfälle).
+- DSProtect-Funktionen, `add lr, pc, #n … bx`, unteren pc-Bits: siehe
+  [`kopierschutz.md`](kopierschutz.md).
+- `recomp.py` löscht vor dem Schreiben alte erzeugte `.c`-Dateien im Ausgabeordner.
 
 ## Folgerungen für das Design
 
