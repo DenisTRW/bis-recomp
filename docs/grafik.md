@@ -45,11 +45,18 @@ reproduzierbar.
 
 - Logo → **Titelbildschirm** (Peachs Schloss, Logo „Mario & Luigi: Bowser's Inside Story“),
   3000 Frames ohne Absturz, 1108 Funktionen.
-- Mit Start + A geht es weiter (1194 Funktionen), dann **Absturz bei Frame ~1496**:
-  Eine Dateistruktur bei `0x020799cc` wird beim Laden eines Overlays (Rückwärts-
-  Dekompression `0x02004970`) überschrieben, danach Lesen mit Archiv-Zeiger 0. Liegt
-  direkt vor dem verschobenen Heap-Anfang `0x020799e0`. **Nächste Hürde.**
-- Unterer Bildschirm bleibt weiß (3D-Ebene fehlt).
+- Mit Start + A geht es zur **Dateiauswahl** (Karte des Pilzkönigreichs, L/R oben),
+  5000 Frames ohne Absturz. Der Absturz bei Frame ~1496 war kein Speicherproblem, sondern
+  zwei Recompiler-Fehler: Aufrufe an Adressen, die sich mehrere Overlays teilen, gingen an
+  das falsche Overlay (Pfad-Tabelle aus ov001 statt ov127 → Datei nie geöffnet), und ein
+  verschleierter Sprung `eor pc, …` in ov129 fiel in die nächste Funktion durch
+  (→ [`recomp.md`](recomp.md)).
+- **Nächste Hürde:** Der untere Bildschirm der Dateiauswahl bleibt leer (türkis), dort
+  liegen vermutlich die Spielstände. Weiterdrücken mit A ändert nichts.
+
+Fehlersuche: `boot_test.exe … [funktion_hex] [adresse:laenge]` zeigt Argumente samt Frame
+und Vorgeschichte bzw. Schreibzugriffe mit Frame, `lr` und `sp`. `BIS_DUMP="adresse:laenge"`
+gibt am Ende Speicher aus.
 
 ## VRAM-Bänke – `recomp/runtime/vram.c`
 

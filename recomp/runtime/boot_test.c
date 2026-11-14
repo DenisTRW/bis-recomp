@@ -373,10 +373,12 @@ static uint32_t watch_lo, watch_hi;
 static uint32_t ctx_addr;   /* optional: Funktion, deren Vorgeschichte/Argumente gezeigt werden */
 static uint32_t ring_last(void);
 static const char *fn_name(uint32_t addr);
+static uint64_t watch_frames(void);
 static void watch(uint32_t a, uint32_t v, int size) {
     static int shown;
-    if (a + (uint32_t)size <= watch_lo || a >= watch_hi || shown++ >= 40) return;
-    fprintf(stderr, "  [watch] wr%d %08x = %08x  in %s\n", size * 8, a, v, fn_name(ring_last()));
+    if (a + (uint32_t)size <= watch_lo || a >= watch_hi || shown++ >= 4000) return;
+    fprintf(stderr, "  [watch] wr%d %08x = %08x  in %s  (Frame %llu, lr=%08x sp=%08x)\n", size * 8, a, v,
+            fn_name(ring_last()), (unsigned long long)watch_frames(), cpu.r[14], cpu.r[13]);
 }
 #define WATCH(a, v, s) do { if (watch_hi) watch(a, v, s); } while (0)
 
@@ -460,7 +462,10 @@ static FnInfo *find_fn(uint32_t addr) {
 
 static const char *fn_name(uint32_t addr) {
     FnInfo *f = find_fn(addr);
-    return f ? f->name : "?";
+    if (f) return f->name;
+    static char buf[4][16]; static int k;
+    snprintf(buf[k & 3], sizeof buf[0], "?%08x", addr);
+    return buf[k++ & 3];
 }
 
 static uint32_t ring[64];
@@ -487,9 +492,12 @@ void rc_enter(CPU *c, uint32_t addr) {
     if (!in_irq) last_outside_irq = addr;
     if (addr == ctx_addr) {
         static int shown;
-        if (shown++ < 100000)
-            fprintf(stderr, "  [args] %08x(r0=%08x r1=%08x r2=%08x r3=%08x) lr=%08x\n",
-                    addr, c->r[0], c->r[1], c->r[2], c->r[3], c->r[14]);
+        if (shown++ < 100000) {
+            fprintf(stderr, "  [args] %08x(r0=%08x r1=%08x r2=%08x r3=%08x) lr=%08x  Frame %llu  davor:",
+                    addr, c->r[0], c->r[1], c->r[2], c->r[3], c->r[14], (unsigned long long)watch_frames());
+            for (int i = 6; i >= 2; i--) fprintf(stderr, " %s", fn_name(ring[(ring_pos - i) & 63]));
+            fprintf(stderr, "\n");
+        }
     }
     fn_entries++;
     FnInfo *f = find_fn(addr);
@@ -539,6 +547,7 @@ void rc_todo(CPU *c, const char *what) {
 #define IRQ_STACK_TOP   0x027e3f80u
 
 static uint64_t frames, frame_limit;
+static uint64_t watch_frames(void) { return frames; }
 
 /* Läuft innerhalb von sched_irq: CPU-Kontext wird davor gesichert und danach
  * wiederhergestellt, ein Thread-Wechsel im Interrupt wäre ein Verstoß. */
@@ -935,6 +944,24 @@ static void report(void) {
             printf("  %08x  vor %08x  nach %08x  groesse %07x  %s  kennung %u\n", b, rd32(b), rd32(b + 4),
                    w & 0x1ffffff, (w >> 25) & 1 ? "frei " : "belegt", w >> 26);
             b = rd32(b + 4);
+        }
+    }
+
+    /* Fehlersuche: BIS_DUMP="adresse:laenge" (hex) zeigt Speicher am Ende */
+    if (getenv("BIS_DUMP")) {
+        char *colon;
+        uint32_t a = (uint32_t)strtoul(getenv("BIS_DUMP"), &colon, 16);
+        uint32_t n = *colon == ':' ? (uint32_t)strtoul(colon + 1, NULL, 16) : 0x40;
+        printf("\nSpeicher ab %08x:\n", a);
+        for (uint32_t i = 0; i < n; i += 16) {
+            char asc[17] = {0};
+            printf("  %08x ", a + i);
+            for (uint32_t j = 0; j < 16; j++) {
+                uint8_t b = rd8(a + i + j);
+                printf(" %02x", b);
+                asc[j] = b >= 0x20 && b < 0x7f ? (char)b : '.';
+            }
+            printf("  %s\n", asc);
         }
     }
 

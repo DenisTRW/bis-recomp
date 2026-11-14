@@ -112,7 +112,13 @@ die Keimzelle der späteren Plattform-Schicht.
 - Ein `pc`-Wert als Operand ist immer `Adresse + 8` (ARM-Pipeline). Bei Verschiebung um
   ein Register wären es eigentlich `+12`, das ist hier aber egal.
 - Aufrufe zwischen Modulen gehen direkt an die Zielfunktion (dsd hat das Ziel-Overlay
-  aufgelöst). Ob das Overlay zur Laufzeit wirklich geladen ist, prüft niemand.
+  aufgelöst). **Ausnahme:** Haben mehrere Overlays an der Zieladresse eine Funktion
+  (z. B. `0x02069820` in ov001/002/122/127), nennt dsd nur das erste. Solche Aufrufe aus
+  einem anderen Modul gehen über `rc_call_indirect`, die Laufzeit erkennt das geladene
+  Overlay am RAM-Inhalt (420 Aufrufstellen). Vorher lief nach dem Titelbildschirm Code aus
+  ov001, obwohl ov127 geladen war.
+- Rechenbefehle mit `pc` als Ziel (`eor pc, r1, r2, ror r1`, verschleierter Sprung in ov129
+  `0x0206db20`) werden zu einem indirekten Sprung zur berechneten Adresse.
 
 ## Folgerungen für das Design
 

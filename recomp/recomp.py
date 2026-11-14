@@ -212,6 +212,7 @@ def read_functions(asm_dir):
 # ---------------------------------------------------------------- Übersetzung
 
 FUNC_AT = {}   # (Modul, Adresse) -> Funktionsname, für rohe Sprungziele
+SHARED_ADDR = {}   # Adresse -> Module, die dort eine Funktion haben (Overlays teilen sich Adressen)
 
 
 class Translator:
@@ -340,7 +341,13 @@ class Translator:
                 raise Unsupported(f"Sprungziel {tgt}")
             tgt = name
         if tgt in self.syms and self.syms[tgt][2] == "function":
-            code = f"{cname(tgt)}(c);"
+            a, tmod = self.syms[tgt][0], self.syms[tgt][1]
+            if tmod != self.module and len(SHARED_ADDR.get(a, ())) > 1:
+                # Mehrere Overlays haben hier eine Funktion: welches geladen ist,
+                # entscheidet sich erst zur Laufzeit (dsd nennt nur das erste)
+                code = f"rc_call_indirect(c, 0x{a:08x}u);"
+            else:
+                code = f"{cname(tgt)}(c);"
         else:
             a = self.label_addr(tgt)
             if a is not None and self.f.addr <= a < self.f.end:
@@ -504,6 +511,10 @@ class Translator:
                 # Ziele über die ganze Funktion: z. B. die Division 0x0204536c springt
                 # bis zu 0x150 Bytes weit in eine ausgerollte Schleife
                 return self.computed_jump(f"({rn} {'+' if op == 'add' else '-'} {o2})", insn, whole=True)
+            if op in DP_LOGIC and not S:
+                # Verschleierter Sprung (z. B. Kopierschutz-Prüfung 0x0206db20 in ov129):
+                #   eor pc, r1, r2, ror r1   -> Ziel erst zur Laufzeit bekannt
+                return f"rc_call_indirect(c, ({rn} {DP_LOGIC[op]}({o2}))); return;"
             raise Unsupported("Schreiben auf pc")
         rd = self.reg(rd_name, insn, read=False)
         if op in DP_LOGIC:
@@ -709,6 +720,7 @@ def main():
     for name, (addr, mod, kind, _args) in syms.items():
         if kind == "function":
             FUNC_AT[(mod, addr)] = name
+            SHARED_ADDR.setdefault(addr, set()).add(mod)
     hle = load_hle(root / "recomp" / "hle.txt")
     unknown = set(hle) - {f.name for f in funcs}
     if unknown:
