@@ -42,6 +42,11 @@ tools\dsd.exe init --rom-config extract\eur\config.yaml --output-path config\eur
 5. [ ] Text-/Script-System
 6. [ ] … Kampf, Overworld
 7. [ ] NDS-Abstraktionsschicht (SDL/OpenGL) für den PC-Port
+8. [ ] PC-Steuerung: frei belegbare Tastatur, Maus als Touchscreen (inkl. Riesenkämpfe),
+       Taste statt Mikrofon-Pusten, Controller über SDL
+
+Beim Decompilieren Input-Funktionen (Pad, Touch, Mikrofon) gezielt benennen und in
+`docs/input.md` festhalten – sie sind später die Andockpunkte für die PC-Steuerung.
 
 ## Ordner
 
