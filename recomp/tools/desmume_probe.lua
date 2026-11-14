@@ -69,6 +69,21 @@ local function on_fade_cmd()
 end
 memory.registerexec(0x0211c43c, on_fade_cmd)
 
+-- Title menu 3D: log the hardware clip matrix (position x projection, CLIPMTX_RESULT at
+-- 0x04000640) whenever it changes, plus the frame. Compared with the port in docs/grafik.md.
+local last_clip = ""
+local function log_clip()
+  local w = {}
+  for i = 0, 15 do w[#w + 1] = string.format("%08x", u32(0x04000640 + i * 4)) end
+  local s = table.concat(w, " ")
+  if s ~= last_clip then
+    f:write(string.format("%6d  CLIP %s\n", emu.framecount(), s))
+    f:flush()
+    last_clip = s
+  end
+end
+local clip_lines = 0
+
 local keys = { "G", "G68", "G6c", "top", "bot", "top_d0", "top_c4", "top_ce", "bot_d0", "bot_c4", "bot_ce",
                "req0", "req1", "req2", "req3", "req4", "req5", "req6", "req7", "bright" }
 local last = {}
@@ -86,5 +101,6 @@ while true do
     f:flush()
   end
   last = v
+  if clip_lines < 3000 then log_clip(); clip_lines = clip_lines + 1 end
   emu.frameadvance()
 end
