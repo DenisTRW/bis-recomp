@@ -13,7 +13,7 @@ build/
 *.map
 
 # Ghidra-Projekt und -Einstellungen (enthalten Original-Code)
-ghidra/
+/ghidra/
 
 # Lokale Tools (Compiler, dsd, objdiff, ...)
 tools/*
