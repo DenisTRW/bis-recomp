@@ -18,6 +18,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <direct.h>      /* _mkdir */
+#else
+#include <sys/stat.h>    /* mkdir */
+#endif
 #include "recomp.h"
 #include "funcs.h"
 #include "platform.h"
@@ -854,6 +859,7 @@ static void script_apply(void) {
 static void vblank(CPU *c) {
     sched_trace(TR_TICK, (uint32_t)frames, 0);
     frames++;
+    if (frames % 120 == 0) arm7_flush_save();   /* geänderten Spielstand regelmäßig sichern (nur mit --save) */
     {   /* Fehlersuche: BIS_PROFILE_FROM=frame zählt "Häufigste" erst ab diesem Frame */
         static long long prof_from = -2;
         if (prof_from == -2) prof_from = getenv("BIS_PROFILE_FROM") ? atoll(getenv("BIS_PROFILE_FROM")) : -1;
@@ -1228,7 +1234,52 @@ static void boot_entry(CPU *c, void *arg) {
     stop_reason = "main ist zurueckgekehrt";
 }
 
+/* Optionen für Launcher (z. B. RecompLauncher). Nur wirksam, wenn angegeben – ohne sie
+ * verhält sich das Programm wie vorher. Sie werden vor der Auswertung der festen
+ * Positionsargumente aus argv entfernt.
+ *   --scale N             Fenstergröße (wie BIS_SCALE)
+ *   --fullscreen          im Vollbild starten (wie BIS_FULLSCREEN=1)
+ *   --filter sharp|smooth Pixelfilter (wie BIS_FILTER)
+ *   --card-delay N        Karten-Timing (wie BIS_CARD_DELAY, 0 = altes Sofort-Verhalten)
+ *   --save DATEI          Spielstand in dieser Datei laden/speichern (Ordner wird angelegt) */
+static void set_option_env(const char *name, const char *value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+static void make_parent_dir(const char *path) {
+    char buf[1024];
+    snprintf(buf, sizeof buf, "%s", path);
+    for (char *p = buf + 1; *p; p++) {
+        if (*p != '/' && *p != '\\') continue;
+        char keep = *p;
+        *p = 0;
+#ifdef _WIN32
+        _mkdir(buf);
+#else
+        mkdir(buf, 0755);
+#endif
+        *p = keep;
+    }
+}
+static int take_options(int argc, char **argv) {
+    int out = 1;
+    for (int i = 1; i < argc; i++) {
+        const char *a = argv[i];
+        if (!strcmp(a, "--scale") && i + 1 < argc) { set_option_env("BIS_SCALE", argv[++i]); continue; }
+        if (!strcmp(a, "--fullscreen")) { set_option_env("BIS_FULLSCREEN", "1"); continue; }
+        if (!strcmp(a, "--filter") && i + 1 < argc) { set_option_env("BIS_FILTER", argv[++i]); continue; }
+        if (!strcmp(a, "--card-delay") && i + 1 < argc) { set_option_env("BIS_CARD_DELAY", argv[++i]); continue; }
+        if (!strcmp(a, "--save") && i + 1 < argc) { make_parent_dir(argv[i + 1]); arm7_set_save_path(argv[++i]); continue; }
+        argv[out++] = argv[i];
+    }
+    return out;
+}
+
 int main(int argc, char **argv) {
+    argc = take_options(argc, argv);
     if (argc < 2) {
         fprintf(stderr, "Aufruf: %s <extract/eur> [frames] [budget_mio]\n", argv[0]);
         return 2;
@@ -1308,6 +1359,7 @@ int main(int argc, char **argv) {
      * OS_SaveContext an seine SDK-Thread-Struktur. */
     snprintf(frames_dir, sizeof frames_dir, "%s/../../build/frames", dir);
     sched_run(&cpu, BOOT_THREAD_KEY, boot_entry, NULL);
+    arm7_flush_save();   /* Spielstand sichern (nur mit --save) */
 #ifndef PLATFORM_SDL
     dump_frame("ende");
 #endif
