@@ -61,8 +61,25 @@ reproduzierbar.
   („Start / Cancel“). Dafür waren nötig: 3D-Renderer, 64-Bit-Division mit mehreren
   Einstiegen (Projektionsmatrix), und der Kopierschutz musste durchlaufen
   (→ [`kopierschutz.md`](kopierschutz.md)).
+- Titelmenü („START GAME / MIC TEST“) verschwand nach dem Einblenden: Liegt die 3D-Ebene
+  oben und darunter ein zweites Blend-Ziel, mischt die Hardware **immer mit dem 3D-Alpha**,
+  auch bei deckenden Pixeln. Wir nahmen dann BLDALPHA (16/16), dadurch wurde alles weiß
+  gesättigt. Behoben.
 - Nach „Start“ wechselt die Szene (Sound-Verwaltung läuft jetzt dank VBlank-Zähler), danach
-  bleibt das Bild **schwarz**: VRAM-Bänke aus, alle Threads warten. **Nächste Hürde.**
+  bleibt das Bild **schwarz**. **Nächste Hürde**, Diagnose:
+  - Der Haupt-Thread wartet in `FS_WaitAsync` (`0x0203dc48`) auf eine Datei, deren
+    `FSFile` (`0x021e3658`) überschrieben wurde.
+  - Überschrieben hat sie der Streaming-Lader `0x0201c9ac`: Ringpuffer 4 × 0x200 Bytes im
+    Objekt `0x021e29cc + 0xf4`, Datensätze mit 2-Byte-Länge. Läuft ein Datensatz über das
+    Pufferende, wird der Rest dahinter kopiert (max. ~0x30c Bytes Platz). Hier kamen
+    Längen von 0x69a/0x6aa, also falsch ausgerichtete Daten.
+  - Ursache vermutlich Zeitverhalten: Beim Wechsel zur nächsten Anforderung parst der Lader
+    noch Reste der alten, während der neue Block geladen wird. Auf der Hardware ist der
+    Karten-DMA dafür langsam genug, bei uns kommt der Block sofort und überschreibt die Reste
+    (sichtbar: Lesezeiger springt um 3 Bytes in den neuen Block).
+  - Ein erster Versuch mit verzögertem Karten-DMA (`BIS_CARD_DELAY`) bringt schon den Start
+    zum Stehen. Der Ablauf des Karten-SDK (`0x02042780` Start, `0x02042340` Fertig-Interrupt,
+    DMA-Stopp `0x0203a3bc`) muss dafür genauer nachgebildet werden.
 
 Fehlersuche: `boot_test.exe … [funktion_hex] [adresse:laenge]` zeigt Argumente samt Frame
 und Vorgeschichte bzw. Schreibzugriffe mit Frame, `lr`, `sp` und Vorgeschichte. Umgebungsvariablen:
@@ -76,6 +93,13 @@ und Vorgeschichte bzw. Schreibzugriffe mit Frame, `lr`, `sp` und Vorgeschichte. 
 | `BIS_LAYERS=1f` | nur diese Ebenen zeichnen (Bit 0-3 BG0-3, Bit 4 Sprites) |
 | `BIS_3D=1` | 3D: Polygon-Zähler, Matrizen, erste Polygone |
 | `BIS_DMALOG=1` / `BIS_DIV=1` | DMA-Übertragungen / auffällige Divisionen protokollieren |
+| `BIS_DUMP_EVERY=n` | Bild alle n Frames (Standard 100) |
+| `BIS_3DPNG=1` | zusätzlich das reine 3D-Bild als `frame_<n>_3d.png` |
+| `BIS_CTXMEM="ac*:40,c00:c"` | bei jedem verfolgten Aufruf Worte ab r0+off ausgeben (`*` = Zeiger folgen) |
+| `BIS_CARDLOG=1` | Karten-Befehle, DMA-Steuerung, Karten-DMA |
+| `BIS_CARD_DELAY=n` | experimentell: Karten-DMA erst nach n Speicherzugriffen |
+
+Funktionsverfolgung mit mehreren Adressen: `boot_test.exe … 0 "0201c9ac,0203dd70"`.
 
 ## VRAM-Bänke – `recomp/runtime/vram.c`
 

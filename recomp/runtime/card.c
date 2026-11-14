@@ -62,6 +62,7 @@ uint32_t card_write_romctrl(uint32_t v) {
         xfer_kind = 0;
         xfer_addr = (uint32_t)cmd[1] << 24 | (uint32_t)cmd[2] << 16 | (uint32_t)cmd[3] << 8 | cmd[4];
         HLE(ORIGINAL, "Karte: Befehl B7 (ROM-Daten lesen)");
+        if (getenv("BIS_CARDLOG")) fprintf(stderr, "  [karte] B7 %08x, %u Bytes\n", xfer_addr, block_bytes(v));
         break;
     case 0xb8:
         xfer_kind = 1;

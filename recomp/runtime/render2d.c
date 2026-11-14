@@ -215,8 +215,11 @@ void render2d_engine(const Gfx2D *g, int eng, uint32_t *out, int apply_bright, u
         int t1 = (bld >> top) & 1, t2 = (bld >> (8 + sec)) & 1;
         int ea = -1, eb = 0;   /* Gewichte für Alpha-Blending (von 16) */
         if (top == 4 && layers[4][i].semi && t2) { ea = eva; eb = evb; }
-        else if (top == 0 && layers[0][i].a3d && layers[0][i].a3d < 31 && t2) {
-            ea = layers[0][i].a3d + 1; eb = 32 - ea; ea /= 2; eb /= 2;   /* 3D-Alpha statt EVA/EVB */
+        else if (top == 0 && layers[0][i].a3d && t2) {
+            /* 3D-Ebene oben, darunter ein zweites Ziel: die Hardware mischt immer mit dem
+             * 3D-Alpha statt EVA/EVB, auch bei deckenden Pixeln (Alpha 31 = reine 3D-Farbe).
+             * Titelmenü: BLDALPHA 16/16 hätte sonst alles weiß gesättigt. */
+            ea = layers[0][i].a3d + 1; eb = 32 - ea; ea /= 2; eb /= 2;
         }
         else if (bmode == 1 && t1 && t2) { ea = eva; eb = evb; }
         uint16_t c = c1;

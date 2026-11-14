@@ -169,6 +169,8 @@ static void hw_sqrt(void) {
 static uint64_t dma_count;
 static void dma_copy(int ch);
 static uint64_t watch_frames(void);
+static uint32_t ring_last(void);
+static const char *fn_name(uint32_t addr);
 
 /* Start-Zeitpunkt (Bits 27-29): 0 sofort, 1 VBlank, 2 HBlank, 5 Karte, 7 GX-FIFO */
 static void dma_run(int ch) {
@@ -234,6 +236,40 @@ static void dma_card(void) {
         if (!((cnt >> 25) & 1)) set_io32(base + 8, cnt & ~0x80000000u);   /* ohne Repeat: fertig */
         return;
     }
+}
+
+/* Karten-DMA dauert auf der Hardware: ein 0x200-Byte-Block braucht grob 100 µs. Der
+ * Streaming-Lader (0x0201c9ac) verlässt sich vermutlich darauf: Er wertet noch Reste im
+ * Ringpuffer aus, während der nächste Block unterwegs ist. Kopieren wir sofort, werden
+ * diese Reste überschrieben (Hänger nach "Neues Spiel", siehe docs/grafik.md).
+ * EXPERIMENTELL: BIS_CARD_DELAY=n verzögert die Übertragung um n Speicherzugriffe. Mit
+ * Verzögerung bleibt derzeit schon der Start hängen (Ablauf des Karten-SDK noch nicht
+ * genau genug nachgebildet), deshalb ist der Standard 0 = sofort. */
+static uint32_t card_countdown, card_delay = 0;
+static int card_fire_pending;
+static int dma_card_armed(void) {
+    for (int ch = 0; ch < 4; ch++) {
+        uint32_t cnt = io32(0xb0 + (uint32_t)ch * 12 + 8);
+        if ((cnt & 0x80000000u) && ((cnt >> 27) & 7) == 5) return 1;
+    }
+    return 0;
+}
+static void card_fire(void);
+static void card_schedule(void) {
+    if (card_transfer_active() && dma_card_armed() && !card_countdown && !card_fire_pending) {
+        if (!card_delay) { card_fire(); return; }   /* BIS_CARD_DELAY=0: sofort (altes Verhalten) */
+        card_countdown = card_delay;
+        HLE(SIMULIERT, "Karten-DMA: Uebertragung nach fester Wartezeit (Speicherzugriffe statt Takt)");
+    }
+}
+static void card_done_check(void);
+static void card_fire(void) {
+    card_fire_pending = 0;
+    if (getenv("BIS_CARDLOG")) fprintf(stderr, "  [karte] DMA ausgeloest (aktiv %d, DMA bereit %d)\n", card_transfer_active(), dma_card_armed());
+    platform_inhibit_irq++;
+    dma_card();
+    card_done_check();
+    platform_inhibit_irq--;
 }
 
 static void card_done_check(void) {
@@ -319,9 +355,9 @@ static void io_write_inner(uint32_t a, uint32_t v, int size) {
         return;
     }
     if ((off & ~3u) == 0x600 && off + (uint32_t)size > 0x601 && ((size == 1 ? v << 8 : v) & 0x8000)) gpu3d_ack_error();
-    if (off == 0x214 && size >= 2) {                /* IF: 1 schreiben = löschen */
-        uint32_t cur = io32(0x214);
-        set_io32(0x214, cur & ~(size == 4 ? v : (v & 0xffff)));
+    if (off >= 0x214 && off < 0x218) {              /* IF: 1 schreiben = löschen */
+        uint32_t mask = (size == 4 ? v : size == 2 ? (v & 0xffff) : (v & 0xff)) << ((off - 0x214) * 8);
+        set_io32(0x214, io32(0x214) & ~mask);
         return;
     }
     if (size == 1) io[off] = (uint8_t)v;
@@ -334,9 +370,11 @@ static void io_write_inner(uint32_t a, uint32_t v, int size) {
     if (off >= 0xb8 && off < 0xe0) {
         int ch = (off - 0xb0) / 12;
         if ((off - 0xb0) % 12 >= 8) {
+            if (getenv("BIS_CARDLOG")) fprintf(stderr, "  [dma] Kanal %d CNT = %08x (Schreiben %d Bytes auf %03x), SRC %08x DST %08x\n",
+                                               ch, io32(0xb0 + (uint32_t)ch * 12 + 8), size, off, io32(0xb0 + (uint32_t)ch * 12), io32(0xb4 + (uint32_t)ch * 12));
             dma_run(ch);
             /* Karten-DMA kann auch nach dem Start der Karte eingerichtet werden */
-            if (card_transfer_active()) { dma_card(); card_done_check(); }
+            if (card_transfer_active()) card_schedule();
         }
     }
     /* VRAMCNT A-G (0x240-0x246), H/I (0x248/0x249); 0x247 ist WRAMCNT */
@@ -346,9 +384,12 @@ static void io_write_inner(uint32_t a, uint32_t v, int size) {
     }
     if (off >= 0x1a8 && off < 0x1b0) card_write_cmd(off - 0x1a8, v, size);
     if ((off & ~3u) == 0x1a4 && (off + (uint32_t)size > 0x1a7)) {   /* oberes Byte (Start-Bit) geschrieben */
+        /* Neue Übertragung: eine noch nicht ausgelieferte Fertigmeldung der vorigen
+         * gehört nicht zu ihr (auf der Hardware kann die neue erst später kommen) */
+        if (io[0x1a7] & 0x80) { irq_pending_extra &= ~IRQ_CARD_DONE; set_io32(0x214, io32(0x214) & ~IRQ_CARD_DONE); }
         set_io32(0x1a4, card_write_romctrl(io32(0x1a4)));
-        dma_card();
-        card_done_check();
+        if (dma_card_armed()) card_schedule();
+        else card_done_check();
     }
 }
 
@@ -368,6 +409,7 @@ static void io_write(uint32_t a, uint32_t v, int size) {
 #define BUDGET() do { \
         if (++mem_accesses > mem_budget) stop("Speicherzugriffs-Budget aufgebraucht"); \
         if ((mem_accesses & TICK_MASK) == 0) tick_pending = 1; \
+        if (card_countdown && !--card_countdown) card_fire(); \
     } while (0)
 
 /* Interrupts auch in engen Warteschleifen ohne Funktionsaufruf: Steht etwas an,
@@ -408,6 +450,7 @@ static void poll_deliver(void) {
 /* Watchpoint (Fehlersuche): Schreibzugriffe auf [watch_lo, watch_hi) protokollieren */
 static uint32_t watch_lo, watch_hi;
 static uint32_t ctx_addr;   /* optional: Funktion, deren Vorgeschichte/Argumente gezeigt werden */
+static uint32_t ctx_more[8];   /* weitere Adressen (Argument "a,b,c") */
 static uint32_t ring_last(void);
 static const char *fn_name(uint32_t addr);
 static uint64_t watch_frames(void);
@@ -541,13 +584,27 @@ void rc_enter(CPU *c, uint32_t addr) {
     }
     ring[ring_pos++ & 63] = addr;
     if (!in_irq) last_outside_irq = addr;
-    if (addr == ctx_addr) {
+    int ctx_hit = addr == ctx_addr;
+    for (int k = 0; k < 8 && ctx_more[k] && !ctx_hit; k++) ctx_hit = addr == ctx_more[k];
+    if (ctx_hit) {
         static int shown;
         if (shown++ < 100000) {
             fprintf(stderr, "  [args] %08x(r0=%08x r1=%08x r2=%08x r3=%08x) lr=%08x  Frame %llu  davor:",
                     addr, c->r[0], c->r[1], c->r[2], c->r[3], c->r[14], (unsigned long long)watch_frames());
             for (int i = 6; i >= 2; i--) fprintf(stderr, " %s", fn_name(ring[(ring_pos - i) & 63]));
             fprintf(stderr, "\n");
+            /* BIS_CTXMEM="ac*:40,c00:10": Worte ab r0+off ausgeben ("*": erst Zeiger lesen) */
+            platform_inhibit_irq++;
+            for (const char *s = getenv("BIS_CTXMEM"); s && *s; s = strchr(s, ',') ? strchr(s, ',') + 1 : NULL) {
+                char *e;
+                uint32_t off = (uint32_t)strtoul(s, &e, 16), a = c->r[0] + off;
+                if (*e == '*') { a = rd32(a); e++; }
+                uint32_t n = *e == ':' ? (uint32_t)strtoul(e + 1, NULL, 16) : 0x10;
+                fprintf(stderr, "        [%x%s] %08x:", off, strchr(s, '*') && strchr(s, '*') < e ? "*" : "", a);
+                for (uint32_t i = 0; i < n; i += 4) fprintf(stderr, " %08x", rd32(a + i));
+                fprintf(stderr, "\n");
+            }
+            platform_inhibit_irq--;
         }
     }
     fn_entries++;
@@ -656,6 +713,16 @@ static void dump_frame(const char *tag) {
     char path[1200];
     snprintf(path, sizeof path, "%s/frame_%s.png", frames_dir, tag);
     if (!png_write_rgb(path, 256, 384, both) && !warned++) fprintf(stderr, "  [bild] kann %s nicht schreiben\n", path);
+    if (getenv("BIS_3DPNG")) {   /* Fehlersuche: reines 3D-Bild (Alpha 0 = magenta) */
+        const Px3D *d = gpu3d_frame();
+        for (int i = 0; i < 256 * 192; i++) {
+            uint16_t c = d[i].color;
+            uint32_t r = (c & 31) << 3, g = ((c >> 5) & 31) << 3, b = ((c >> 10) & 31) << 3;
+            top[i] = d[i].alpha ? r << 16 | g << 8 | b : 0xff00ff;
+        }
+        snprintf(path, sizeof path, "%s/frame_%s_3d.png", frames_dir, tag);
+        png_write_rgb(path, 256, 192, top);
+    }
     static const char *const miss_name[] = {
         "Renderer: affine/erweiterte Hintergruende", "Renderer: 3D-Ebene (BG0 von Engine A)",
         "Renderer: affine Sprites", "Renderer: Bitmap-Sprites", "Renderer: Fenster",
@@ -673,6 +740,10 @@ static void dump_frame(const char *tag) {
 void platform_idle(CPU *c) {
     irq_force = 1;
     HLE(SIMULIERT, "Leerlauf in OS_SelectThread: Interrupt trotz gesperrtem I-Bit");
+    if (card_countdown || card_fire_pending) {   /* alle warten: die Karten-Übertragung wird fertig */
+        card_countdown = 0;
+        card_fire();
+    }
     if (!deliver_pending(c)) vblank(c);
     irq_force = 0;
 }
@@ -1017,9 +1088,9 @@ static void report(void) {
     }
 
     /* Fehlersuche: BIS_DUMP="adresse:laenge" (hex) zeigt Speicher am Ende */
-    if (getenv("BIS_DUMP")) {
+    for (const char *s = getenv("BIS_DUMP"); s && *s; s = strchr(s, ',') ? strchr(s, ',') + 1 : NULL) {   /* auch "a:n,b:m" */
         char *colon;
-        uint32_t a = (uint32_t)strtoul(getenv("BIS_DUMP"), &colon, 16);
+        uint32_t a = (uint32_t)strtoul(s, &colon, 16);
         uint32_t n = *colon == ':' ? (uint32_t)strtoul(colon + 1, NULL, 16) : 0x40;
         printf("\nSpeicher ab %08x:\n", a);
         for (uint32_t i = 0; i < n; i += 16) {
@@ -1096,11 +1167,17 @@ int main(int argc, char **argv) {
     frame_limit = argc > 2 ? strtoull(argv[2], NULL, 0) : 600;
     mem_budget = (argc > 3 ? strtoull(argv[3], NULL, 0) : 2000) * 1000000ull;
     ctx_addr = argc > 4 ? (uint32_t)strtoul(argv[4], NULL, 16) : 0;
+    if (argc > 4) {   /* "a,b,c": mehrere Funktionen verfolgen */
+        const char *s = strchr(argv[4], ',');
+        for (int k = 0; s && k < 8; k++, s = strchr(s + 1, ',')) ctx_more[k] = (uint32_t)strtoul(s + 1, NULL, 16);
+    }
     if (argc > 5) {   /* Watchpoint "adresse:laenge" (hex) */
         char *colon;
         watch_lo = (uint32_t)strtoul(argv[5], &colon, 16);
         watch_hi = watch_lo + (*colon == ':' ? (uint32_t)strtoul(colon + 1, NULL, 16) : 4);
     }
+    if (getenv("BIS_CARD_DELAY")) card_delay = (uint32_t)strtoul(getenv("BIS_CARD_DELAY"), NULL, 0);
+    if (getenv("BIS_DUMP_EVERY")) dump_every = strtoull(getenv("BIS_DUMP_EVERY"), NULL, 0);   /* Bild alle N Frames */
 #ifdef PLATFORM_SDL
     /* Fenster-Modus: ohne Frame-Limit und Budget, keine PNG-Ausgabe */
     if (argc <= 2) frame_limit = 0;
