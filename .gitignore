@@ -31,3 +31,7 @@ __pycache__/
 # Local screenshots rendered from your own ROM (shown in the launcher) - never commit
 screenshots/
 /BISLauncher.exe
+
+# Save files of the PC port (--save) - player data, never commit
+/saves/
+*.sav
