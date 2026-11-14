@@ -44,17 +44,19 @@ card, the ARM7 co-processor, …).
 
 `BISLauncher.exe` is a small launcher made just for this port:
 
-- **Overview**: a screenshot gallery (arrows, thumbnails, mouse wheel), information about the game
-  and the port, the controls, and **Launch game**.
+- **Overview**: the game's title on top of a blurred cover backdrop, a large gallery with the
+  cover and screenshots (arrows, thumbnails, arrow keys), **Launch game**, and below it the
+  game description, information about the port and the controls.
 - **ROM check**: verifies your copy (SHA-1), copies it to where the port expects it and runs the
   one-time setup (extracting the game data).
-- **Settings**: window size, start in fullscreen, sharp or smooth pixels, and experimental
+- **Settings** (gear icon, top left): window size, start in fullscreen, sharp or smooth pixels, and experimental
   accurate card timing. They are passed to the game as environment variables
   (`BIS_SCALE`, `BIS_FULLSCREEN`, `BIS_FILTER`, `BIS_CARD_DELAY`). Graphics enhancements, audio,
   controller support and the touch screen are listed as planned.
 
-Screenshots are read from `screenshots/bis` and are **not part of the repository** – they come
-from your own copy of the game (for example frames rendered by the headless build in
+The cover (`screenshots/bis/cover.jpg` or `.png`) and screenshots are read from
+`screenshots/bis` and are **not part of the repository** – take a photo of your own game case for
+the cover; screenshots come from your own copy of the game (for example frames rendered by the headless build in
 `build/frames`). Game output is written to `build/logs/bis.log`.
 
 Build it with:
