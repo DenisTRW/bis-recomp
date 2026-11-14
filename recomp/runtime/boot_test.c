@@ -10,15 +10,18 @@
  *   - Funktionstabelle für indirekte Aufrufe, Overlays werden anhand des
  *     RAM-Inhalts erkannt
  *   - Wachhund: bricht nach einem Speicherzugriffs-Budget oder N Frames ab
+ *   - Threads: jeder SDK-Thread läuft in einem eigenen Fiber (sched.c,
+ *     threads_hle.c); Interrupts nur an sicheren Punkten (deterministisch)
  *
- * Aufruf: boot_test.exe <extract/eur-Ordner> [frames] [budget_mio]
+ * Aufruf: boot_test.exe <extract/eur-Ordner> [frames] [budget_mio] [funktion_hex]
  */
-#include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "recomp.h"
 #include "funcs.h"
+#include "platform.h"
+#include "sched.h"
 
 /* ================================================================ HLE-Register
  *
@@ -30,18 +33,16 @@
  * Der Bericht listet alle benutzten Einträge. So sieht man bei Fehlern sofort,
  * welche Vereinfachungen im Spiel waren.
  */
-typedef enum { ORIGINAL, SIMULIERT, FEHLT } HleCat;
 static const char *const hle_cat_name[] = { "ORIGINAL ", "SIMULIERT", "FEHLT    " };
 #define HLE_MAX 128
 static struct { HleCat cat; const char *what; uint64_t n; } hle[HLE_MAX];
 
-static void hle_hit(HleCat cat, const char *what) {
+void hle_hit(HleCat cat, const char *what) {
     for (int i = 0; i < HLE_MAX; i++) {
         if (!hle[i].what) { hle[i].cat = cat; hle[i].what = what; hle[i].n = 1; return; }
         if (hle[i].what == what || strcmp(hle[i].what, what) == 0) { hle[i].n++; return; }
     }
 }
-#define HLE(cat, what) hle_hit(cat, what)
 
 /* ================================================================ Speicher */
 
@@ -55,13 +56,22 @@ static uint8_t vram[0x900000];
 static uint8_t oam[0x800];
 
 static uint64_t mem_accesses, mem_budget;
-static jmp_buf stop_jmp;
 static const char *stop_reason = "?";
+static CPU cpu;              /* der eine CPU-Kontext, den alle Threads teilen */
 
+/* Beendet den Lauf aus jedem Thread: zurück in den Wurzel-Fiber, dann Bericht.
+ * (longjmp wäre über Fiber-Grenzen hinweg nicht erlaubt.) */
 static void stop(const char *why) {
     stop_reason = why;
-    longjmp(stop_jmp, 1);
+    sched_stop(&cpu);
 }
+void platform_stop(const char *why) { stop(why); }
+
+/* Zählerbasierter Takt: alle 2^22 Speicherzugriffe ein Frame, auch wenn kein
+ * Thread schläft (für Warteschleifen, die ohne zu schlafen auf Interrupts warten).
+ * Ausgeliefert wird er erst am nächsten sicheren Punkt (Funktionsanfang). */
+#define TICK_MASK ((1ull << 22) - 1)
+static int tick_pending;
 
 static inline uint8_t *ptr(uint32_t a) {
     switch (a >> 24) {
@@ -196,7 +206,13 @@ static void io_write(uint32_t a, uint32_t v, int size) {
     io_count(a, 1);
     if (a >= 0x04100000u) return;
     uint32_t off = a & 0x1fff;
-    if (off == 0x188) HLE(FEHLT, "ARM7: IPC-FIFO-Senden (Nachrichten werden verworfen)");
+    if (off == 0x188) {
+        static int shown;
+        HLE(FEHLT, "ARM7: IPC-FIFO-Senden (Nachrichten werden verworfen)");
+        /* NitroSDK-PXI: Bits 0-4 Kanal (Tag), Bit 5 Fehler, Bits 6-31 Daten */
+        if (shown++ < 20)
+            fprintf(stderr, "  [pxi] an ARM7: Kanal %2u, Daten 0x%07x (roh %08x)\n", v & 0x1f, v >> 6, v);
+    }
     if ((off >= 0x290 && off < 0x2a0) || off == 0x280) HLE(ORIGINAL, "Hardware-Divider");
     if ((off >= 0x2b8 && off < 0x2c0) || off == 0x2b0) HLE(ORIGINAL, "Hardware-Wurzel");
     if (off >= 0x400 && off < 0x700) HLE(FEHLT, "3D-Grafik (GX-Befehle)");
@@ -218,7 +234,10 @@ static void io_write(uint32_t a, uint32_t v, int size) {
     }
 }
 
-#define BUDGET() do { if (++mem_accesses > mem_budget) stop("Speicherzugriffs-Budget aufgebraucht"); } while (0)
+#define BUDGET() do { \
+        if (++mem_accesses > mem_budget) stop("Speicherzugriffs-Budget aufgebraucht"); \
+        if ((mem_accesses & TICK_MASK) == 0) tick_pending = 1; \
+    } while (0)
 
 uint8_t rd8(uint32_t a) {
     BUDGET();
@@ -308,15 +327,16 @@ static unsigned ring_pos;
 static uint64_t fn_entries;
 static int in_irq;
 static void vblank(CPU *c);
-
-#define OS_SLEEP_THREAD 0x02038dc4u
+static void resched_if_pending(CPU *c);
 
 void rc_enter(CPU *c, uint32_t addr) {
-    /* Vereinfachtes Thread-Modell: legt sich ein Thread schlafen, vergeht Zeit
-     * bis zum nächsten VBlank. Der Interrupt-Handler des Spiels weckt ihn dann. */
-    if (addr == OS_SLEEP_THREAD && !in_irq) {
-        HLE(SIMULIERT, "Threads: Schlafen = Zeit bis zum naechsten Frame (kein Thread-Wechsel)");
+    /* Sicherer Punkt für den zählerbasierten Takt: nur wenn Interrupts erlaubt
+     * sind (IME an, I-Bit im CPSR aus) – so wie auf der echten Hardware. */
+    if (tick_pending && !in_irq && (io[0x208] & 1) && !(c->cpsr_ctrl & 0x80)) {
+        tick_pending = 0;
+        HLE(SIMULIERT, "Zeit-Takt alle 2^22 Speicherzugriffe (an Funktionsanfaengen)");
         vblank(c);
+        resched_if_pending(c);
     }
     ring[ring_pos++ & 63] = addr;
     fn_entries++;
@@ -326,6 +346,8 @@ void rc_enter(CPU *c, uint32_t addr) {
             for (int i = 0; i < 12; i++) f->first_ctx[i] = ring[(ring_pos - 13 + i) & 63];
     }
 }
+
+int platform_is_function(uint32_t addr) { return find_fn(addr) != NULL; }
 
 static uint64_t indirect_fail;
 void rc_call_indirect(CPU *c, uint32_t addr) {
@@ -363,25 +385,50 @@ void rc_todo(CPU *c, const char *what) {
 
 static uint64_t frames, frame_limit;
 
-static void raise_irq(CPU *c, uint32_t bits) {
-    static int shown;
-    if (shown++ < 3)
-        fprintf(stderr, "  [irq] IF|=%x  IME=%x IE=%08x Handler=%08x cpsr=%x\n", bits,
-                io32(0x208), io32(0x210), rd32(IRQ_HANDLER_PTR), c->cpsr_ctrl);
-    set_io32(0x214, io32(0x214) | bits);
-    if (in_irq || !(io32(0x208) & 1) || !(io32(0x210) & bits)) return;
-    uint32_t handler = rd32(IRQ_HANDLER_PTR);
-    if (!handler) return;
-    CPU saved = *c;
+/* Läuft innerhalb von sched_irq: CPU-Kontext wird davor gesichert und danach
+ * wiederhergestellt, ein Thread-Wechsel im Interrupt wäre ein Verstoß. */
+static void irq_entry(CPU *c, void *arg) {
+    uint32_t handler = (uint32_t)(uintptr_t)arg;
     in_irq = 1;
     c->r[13] = IRQ_STACK_TOP;
     c->r[14] = 0;
+    c->cpsr_ctrl = 0x92;      /* IRQ-Modus, weitere IRQs gesperrt */
     rc_call_indirect(c, handler);
     in_irq = 0;
-    *c = saved;
+}
+
+/* force = Interrupt auch bei gesetztem I-Bit ausliefern (nur für den simulierten
+ * Leerlauf in OS_SelectThread, der innerhalb einer gesperrten Sektion läuft) */
+static int irq_force;
+
+static void raise_irq(CPU *c, uint32_t bits) {
+    set_io32(0x214, io32(0x214) | bits);
+    if (in_irq || !(io32(0x208) & 1) || !(io32(0x210) & bits)) return;
+    if ((c->cpsr_ctrl & 0x80) && !irq_force) return;   /* I-Bit: Interrupts gesperrt */
+    uint32_t handler = rd32(IRQ_HANDLER_PTR);
+    if (!handler) return;
+    sched_irq(c, bits, irq_entry, (void *)(uintptr_t)handler);
+}
+
+void platform_idle(CPU *c) {
+    irq_force = 1;
+    HLE(SIMULIERT, "Leerlauf in OS_SelectThread: Interrupt trotz gesperrtem I-Bit");
+    vblank(c);
+    irq_force = 0;
+}
+
+/* Interrupt hat einen Thread geweckt: wie beim Verlassen eines echten IRQs neu
+ * planen. Der unterbrochene Thread wird komplett gesichert. */
+static void resched_if_pending(CPU *c) {
+    if (!platform_resched_pending) return;
+    platform_resched_pending = 0;
+    CPU keep = *c;
+    rc_OS_RescheduleThread(c);
+    *c = keep;
 }
 
 static void vblank(CPU *c) {
+    sched_trace(TR_TICK, (uint32_t)frames, 0);
     frames++;
     if (frame_limit && frames >= frame_limit) stop("Frame-Limit erreicht");
     io[4] |= 1;
@@ -495,8 +542,24 @@ uint32_t rc_mrc(CPU *c, int a, int b, int d, int e) {
     HLE(SIMULIERT, "CP15 lesen (liefert 0)");
     return 0;
 }
+static uint64_t halts_locked;
+
 void rc_mcr(CPU *c, int a, int b, int d, int e, uint32_t v) {
-    (void)c; (void)a; (void)b; (void)d; (void)e; (void)v;
+    (void)v;
+    if (a == 0 && b == 7 && d == 0 && e == 4) {
+        /* CP15 c7,c0,4 = "Warte auf Interrupt" (OS_Halt). Zeit vergeht bis zum
+         * nächsten Interrupt; danach am sicheren Punkt neu planen. */
+        HLE(ORIGINAL, "OS_Halt: warten bis zum naechsten Interrupt");
+        if (c->cpsr_ctrl & 0x80) {
+            /* Mit gesperrten Interrupts kommt nie wieder einer an (OS_Terminate) */
+            if (++halts_locked > 3) stop("OS_Terminate: Prozessor mit gesperrten Interrupts angehalten");
+        } else {
+            halts_locked = 0;
+        }
+        vblank(c);
+        resched_if_pending(c);
+        return;
+    }
     HLE(SIMULIERT, "CP15 schreiben (Cache/MPU/TCM ohne Wirkung)");
 }
 
@@ -600,9 +663,28 @@ static void report(void) {
     printf("\nRecompiler-TODOs (nicht uebersetzte Befehle):\n");
     for (int i = 0; i < TODO_MAX && todos[i].what; i++)
         printf("  %8llu  %s\n", (unsigned long long)todos[i].n, todos[i].what);
+
+    printf("\nThreads:\n");
+    printf("  Scheduler-Verstoesse: %u\n", sched_violations);
+    printf("  Trace: %llu Ereignisse, Pruefsumme %016llx\n",
+           (unsigned long long)sched_trace_count(), (unsigned long long)sched_trace_hash());
+    printf("  Letzte Thread-Ereignisse (ohne TICK/IRQ):\n");
+    sched_trace_dump_filtered(stdout, 25);
 }
 
 /* ================================================================ Start */
+
+static void boot_entry(CPU *c, void *arg) {
+    (void)arg;
+    c->r[13] = 0x027e3c00u;               /* System-Stack im DTCM */
+    c->cpsr_ctrl = 0x1f;                  /* System-Modus, Interrupts erlaubt */
+    /* Reihenfolge wie am Ende von Entry */
+    rc_func_02045cb8(c);
+    rc_func_02019a18(c);
+    rc_func_020471dc(c);
+    rc_main(c);
+    stop_reason = "main ist zurueckgekehrt";
+}
 
 int main(int argc, char **argv) {
     if (argc < 2) {
@@ -638,21 +720,11 @@ int main(int argc, char **argv) {
     HLE(SIMULIERT, "ARM7: alle PXI-Kanaele als bereit gemeldet (ohne echte Gegenstelle)");
     set_io16(0x130, 0x03ff);
 
-    static CPU c;
-    memset(&c, 0, sizeof c);
-    c.r[13] = 0x027e3c00u;                /* System-Stack im DTCM */
-    c.cpsr_ctrl = 0x1f;                   /* System-Modus */
-
     printf("Funktionen: %u, Frame-Limit %llu, Budget %llu Mio. Speicherzugriffe\n",
            nfns, (unsigned long long)frame_limit, (unsigned long long)(mem_budget / 1000000));
-    if (setjmp(stop_jmp) == 0) {
-        /* Reihenfolge wie am Ende von Entry */
-        rc_func_02045cb8(&c);
-        rc_func_02019a18(&c);
-        rc_func_020471dc(&c);
-        rc_main(&c);
-        stop_reason = "main ist zurueckgekehrt";
-    }
+    /* Der Start-Thread läuft als erster Fiber; er bindet sich beim ersten
+     * OS_SaveContext an seine SDK-Thread-Struktur. */
+    sched_run(&cpu, BOOT_THREAD_KEY, boot_entry, NULL);
     report();
     return 0;
 }

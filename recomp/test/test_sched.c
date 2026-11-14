@@ -8,6 +8,7 @@
  *  4. Determinismus:  gleicher Seed -> gleiche Trace-Prüfsumme, anderer Seed -> andere
  *  5. Tiefe Rekursion: 50 000 Ebenen tief, mittendrin Wechsel, Stack bleibt intakt
  *  6. Prüfungen prüfen: absichtlich beschädigter Kontext/Kanarienvogel wird erkannt
+ *  7. Umbenennen:     Thread bekommt neuen Schlüssel, Kontext und Stack bleiben gültig
  */
 #include <stdio.h>
 #include <string.h>
@@ -186,6 +187,29 @@ static void test_self_check(void) {
     sched_run(&cpu, 0x61, attacker, NULL);
 }
 
+/* ---------------------------------------------------------------- 7. Umbenennen */
+
+static void rb_helper(CPU *c, void *arg) {
+    (void)arg;
+    fill_regs(c, 9);
+    sched_switch(c, 0x7100, NULL, NULL);   /* zurück zum umbenannten Thread */
+}
+static void rb_thread(CPU *c, void *arg) {
+    (void)arg;
+    sched_rebind_current(0x7100);           /* wie der Start-Thread beim ersten OS_SaveContext */
+    CHECK(sched_current() == 0x7100, "Umbenennen hat den Schluessel nicht geaendert");
+    fill_regs(c, 71);
+    sched_switch(c, 0x7200, rb_helper, NULL);
+    CHECK(regs_ok(c, 71), "Register nach Umbenennen + Wechsel falsch");
+    sched_check_all();
+}
+static void test_rebind(void) {
+    printf("7. Umbenennen (Start-Thread bindet sich an SDK-Thread)\n");
+    unsigned before = sched_violations;
+    sched_run(&cpu, 0x7000, rb_thread, NULL);
+    CHECK(sched_violations == before, "Verstoss nach Umbenennen (z. B. Kanarienvogel)");
+}
+
 /* ---------------------------------------------------------------- main */
 
 int main(void) {
@@ -195,6 +219,7 @@ int main(void) {
     test_determinism();
     test_deep();
     test_self_check();
+    test_rebind();
     if (sched_violations) { printf("Unerwartete Scheduler-Verstoesse: %u\n", sched_violations); failures++; }
     printf(failures ? "FEHLGESCHLAGEN (%d)\n" : "OK – alle Scheduler-Tests bestanden\n", failures);
     return failures != 0;

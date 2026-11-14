@@ -56,7 +56,9 @@ Lege den ROM als `orig/baserom.nds` ab (wird von Git ignoriert).
 - [ ] Overlays: Funktionen pro Overlay, Laden/Entladen zur Laufzeit
 - [x] Hauptprogramm kompiliert und läuft bis zur ersten Hardware-Abfrage
       → [`docs/boot.md`](docs/boot.md): ~140 Funktionen inkl. OS/PXI/IRQ-Init und Tastenabfrage
-- [ ] Thread-Modell: SDK-Threads als Host-Fibers (aktueller Halt beim Thread-Wechsel nach IRQ)
+- [x] Thread-Modell: SDK-Threads als Host-Fibers, deterministisch, 7 Einzeltests
+      → [`docs/threads.md`](docs/threads.md) (Zweig `thread-model`)
+- [ ] ARM7-Ersatz für den Kartenzugriff (PXI-Kanal 11): aktueller Halt beim Start
 
 ### Phase 3: Plattform-Schicht (SDL + OpenGL)
 

@@ -33,6 +33,7 @@ enum {
     TR_TICK,        /* a = Frame-Nummer */
     TR_WAKE,        /* a = geweckter Thread */
     TR_USER,        /* frei für Tests/Spiel-HLE */
+    TR_BIND,        /* a = alter Schlüssel, b = neuer Schlüssel */
 };
 
 /* Führt entry(c, arg) als ersten Thread (Schlüssel main_key) aus und kehrt
@@ -52,6 +53,10 @@ void sched_stop(CPU *c);
  * gesichert und danach wiederhergestellt (wie bei einem echten IRQ). */
 void sched_irq(CPU *c, uint32_t bits, SchedEntry handler, void *arg);
 
+/* Gibt dem laufenden Thread einen neuen Schlüssel (z. B. wenn der Start-Thread
+ * erfährt, welche SDK-Thread-Struktur er ist). */
+void sched_rebind_current(uint32_t key);
+
 uint32_t sched_current(void);
 int sched_exists(uint32_t key);
 int sched_finished(uint32_t key);
@@ -62,6 +67,8 @@ void sched_trace(int type, uint32_t a, uint32_t b);
 uint64_t sched_trace_hash(void);
 uint64_t sched_trace_count(void);
 void sched_trace_dump(FILE *f, unsigned last_n);
+/* wie oben, aber nur Thread-Ereignisse (ohne TICK/IRQ/WAKE), die letzten n davon */
+void sched_trace_dump_filtered(FILE *f, unsigned last_n);
 
 /* Selbstprüfung */
 extern unsigned sched_violations;

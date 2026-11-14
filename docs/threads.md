@@ -1,7 +1,47 @@
-# Thread-Modell (in Arbeit, Zweig `thread-model`)
+# Thread-Modell (Zweig `thread-model`)
 
 Referenzpunkt vor dieser Arbeit: Tag `ref/boot-140` (= `f1ecd6d`). Gebautes Testprogramm
 und Bericht dieses Stands liegen lokal in `build/ref/boot-140/`.
+
+## Stand (15.11.2026): funktioniert
+
+```
+recomp\test\run_tests.bat            # Einzeltests (Pad_Update + 7 Scheduler-Tests)
+recomp\runtime\run_boot.bat 600 2000 # Start-Test mit Thread-Modell
+```
+
+**Umsetzung:**
+- `recomp/runtime/sched.c/.h`: Fiber-Scheduler. Ein Fiber pro SDK-Thread, gemeinsamer
+  CPU-Kontext, Selbstprüfung (Stack-Kanarienvogel, Kontext-Prüfsumme, kein Wechsel im
+  Interrupt), deterministischer Trace mit Prüfsumme.
+- `recomp/hle.txt`: Der Recompiler ersetzt dort gelistete Funktionen. Das Original
+  bleibt als `rc_orig_…` erhalten.
+- `recomp/runtime/threads_hle.c`: Ersatz für `OS_SaveContext`, `OS_LoadContext`,
+  `OS_SelectThread` und `OS_IrqHandler_ThreadSwitch`.
+- `boot_test.c`: Interrupts über `sched_irq`, nur bei freiem I-Bit (wie Hardware).
+  `OS_Halt` (CP15 c7,c0,4 = „Warte auf Interrupt“) lässt einen Frame vergehen und plant
+  danach neu. Zählerbasierter Takt alle 2^22 Speicherzugriffe an Funktionsanfängen.
+
+**Ergebnis Start-Test:**
+- 4 Threads: Start-Thread (bindet sich an `0x020606d4`), `0x02062784` (Start bei
+  `0x02042928`), `0x020630a0` (`0x020433a8`) und der Leerlauf-Thread `0x02060614`
+  (`0x02038fb8`: Interrupts an, Endlosschleife `OS_Halt`).
+- Wechsel Start-Thread ↔ Leerlauf ↔ Interrupt funktionieren, 600 Frames stabil,
+  **0 Scheduler-Verstöße**.
+- **Deterministisch:** zwei Läufe → gleiche Trace-Prüfsumme (`7b1818c64a5cfe3e`, 1 211 Ereignisse).
+- **Neuer Halt (nicht mehr Thread-Modell):** Der Start-Thread schickt zwei PXI-Nachrichten an
+  **Kanal 11 (Dateisystem/Karte)**, die zweite mit Zeiger `0x020626e0` auf einen
+  Befehlsblock, und wartet auf die Antwort des ARM7. → nächstes Thema: ARM7-Ersatz für den
+  Kartenzugriff.
+
+**Unterwegs gefunden und behoben:**
+- Ein Wechsel im Interrupt wurde zunächst nicht erkannt, wenn der andere Thread sofort
+  endete. Test 3 hat das gezeigt, jetzt wird schon beim Wechsel geprüft.
+- dsd schreibt manche Sprungziele als rohen Offset relativ zur Befehlsadresse
+  (`b #-0x8`). Der Recompiler wertet sie jetzt aus (+20 vollständig übersetzte Funktionen,
+  u. a. Leerlauf-Thread und `OS_Terminate`).
+- `0x0203a070` = `OS_Terminate`, `0x0203a080` = `OS_Halt`, `0x02038fb8` = Leerlauf-Thread,
+  `0x02038cb4` = `OS_ExitThread`, `0x02039cdc` = `OS_EnableInterrupts`.
 
 ## Analyse der SDK-Funktionen
 
@@ -58,11 +98,11 @@ einen Trace mit Prüfsumme. Zwei Läufe müssen dieselbe Prüfsumme ergeben.
 4. Determinismus: gleiches Szenario zweimal → gleiche Trace-Prüfsumme, anderes → andere.
 5. Tiefe Rekursion in einem Fiber, dann Wechsel → Stack intakt.
 
-## Nächste Schritte
+## Nächste Schritte (ursprünglicher Plan – erledigt)
 
-1. `recomp/runtime/sched.c/.h` (Fibers, Kontext sichern/laden, Trace)
-2. `recomp/test/test_sched.c` (Tests 1–5)
-3. Recompiler: HLE-Override-Liste (`recomp/hle.txt`), Original als `rc_orig_…`
-4. HLE für die vier Funktionen oben, Einbau in `boot_test.c`, Leerlauf-Takt aus
-   `OS_SleepThread` nach `OS_SelectThread` verlegen
-5. Start-Test laufen lassen, mit `build/ref/boot-140/bericht.txt` vergleichen
+1. ✅ `recomp/runtime/sched.c/.h` (Fibers, Kontext sichern/laden, Trace)
+2. ✅ `recomp/test/test_sched.c` (Tests 1–5, dazu 6 „Prüfungen prüfen“ und 7 „Umbenennen“)
+3. ✅ Recompiler: HLE-Override-Liste (`recomp/hle.txt`), Original als `rc_orig_…`
+4. ✅ HLE für die vier Funktionen, Einbau in `boot_test.c`. Leerlauf über den echten
+   Leerlauf-Thread (`OS_Halt`), der Leerlauf in `OS_SelectThread` ist nur noch Rückfallebene.
+5. ✅ Start-Test: kommt weiter als `ref/boot-140` (dort Halt beim IRQ-Thread-Wechsel)

@@ -1,0 +1,15 @@
+# HLE-Ersatz für einzelne Funktionen
+#
+# Format:  <dsd-Name>  <C-Funktion>  <Kategorie>  <Beschreibung>
+#
+# Der Recompiler übersetzt die Original-Funktion trotzdem (als rc_orig_<Name>),
+# rc_<Name> ruft aber die C-Funktion hle_... auf. Der Ersatz kann das Original
+# weiterhin aufrufen (z. B. als Hülle drumherum).
+#
+# Kategorie wie im Laufzeit-Bericht: ORIGINAL (gleiches Verhalten, nur anders
+# umgesetzt), SIMULIERT (bewusst vereinfacht), FEHLT.
+
+OS_SaveContext              hle_OS_SaveContext              ORIGINAL   Kontext sichern, laufenden Fiber an den Thread binden
+OS_LoadContext              hle_OS_LoadContext              ORIGINAL   Wechsel zum Fiber des Ziel-Threads (neu: Start aus dem Kontext)
+OS_SelectThread             hle_OS_SelectThread             SIMULIERT  Original; kein Thread bereit -> Leerlauf-Frame, neu waehlen
+OS_IrqHandler_ThreadSwitch  hle_OS_IrqHandler_ThreadSwitch  SIMULIERT  IRQ-Queue wecken wie Original, Wechsel erst am sicheren Punkt

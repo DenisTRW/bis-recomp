@@ -50,13 +50,30 @@ uint64_t sched_trace_hash(void) { return tr_hash; }
 uint64_t sched_trace_count(void) { return tr_count; }
 
 void sched_trace_dump(FILE *f, unsigned last_n) {
-    static const char *const names[] = { "?", "CREATE", "SWITCH", "EXIT", "IRQ", "TICK", "WAKE", "USER" };
+    static const char *const names[] = { "?", "CREATE", "SWITCH", "EXIT", "IRQ", "TICK", "WAKE", "USER", "BIND" };
     uint64_t start = tr_count > last_n ? tr_count - last_n : 0;
     if (tr_count - start > TRACE_RING) start = tr_count - TRACE_RING;
     for (uint64_t i = start; i < tr_count; i++) {
         int t = ring[i % TRACE_RING].type;
         fprintf(f, "  %8llu  %-6s %08x %08x\n", (unsigned long long)i,
-                (t > 0 && t <= TR_USER) ? names[t] : "?", ring[i % TRACE_RING].a, ring[i % TRACE_RING].b);
+                (t > 0 && t <= TR_BIND) ? names[t] : "?", ring[i % TRACE_RING].a, ring[i % TRACE_RING].b);
+    }
+}
+
+void sched_trace_dump_filtered(FILE *f, unsigned last_n) {
+    static const char *const names[] = { "?", "CREATE", "SWITCH", "EXIT", "IRQ", "TICK", "WAKE", "USER", "BIND" };
+    uint64_t lo = tr_count > TRACE_RING ? tr_count - TRACE_RING : 0, start = tr_count;
+    unsigned found = 0;
+    while (start > lo && found < last_n) {
+        int t = ring[(start - 1) % TRACE_RING].type;
+        if (t != TR_TICK && t != TR_IRQ && t != TR_WAKE) found++;
+        start--;
+    }
+    for (uint64_t i = start; i < tr_count; i++) {
+        int t = ring[i % TRACE_RING].type;
+        if (t == TR_TICK || t == TR_IRQ || t == TR_WAKE) continue;
+        fprintf(f, "  %8llu  %-6s %08x %08x\n", (unsigned long long)i,
+                (t > 0 && t <= TR_BIND) ? names[t] : "?", ring[i % TRACE_RING].a, ring[i % TRACE_RING].b);
     }
 }
 
@@ -100,6 +117,21 @@ static int find(uint32_t key) {
 }
 
 uint32_t sched_current(void) { return cur >= 0 ? slots[cur].key : 0; }
+
+void sched_rebind_current(uint32_t key) {
+    if (cur < 0) { violation("Umbenennen ohne laufenden Thread", key); return; }
+    int other = find(key);
+    if (other >= 0 && other != cur) {
+        if (slots[other].state == SLOT_ALIVE) { violation("Schluessel gehoert schon einem laufenden Thread", key); return; }
+        if (slots[other].fiber) DeleteFiber(slots[other].fiber);
+        memset(&slots[other], 0, sizeof slots[other]);
+    }
+    sched_trace(TR_BIND, slots[cur].key, key);
+    /* Kanarienvogel-Werte hängen vom Schlüssel ab -> neu schreiben */
+    if (slots[cur].canary)
+        for (int i = 0; i < CANARY_WORDS; i++) slots[cur].canary[i] = canary_value(key, i);
+    slots[cur].key = key;
+}
 int sched_exists(uint32_t key) { int i = find(key); return i >= 0 && slots[i].state == SLOT_ALIVE; }
 int sched_finished(uint32_t key) { int i = find(key); return i >= 0 && slots[i].state == SLOT_FINISHED; }
 unsigned sched_thread_count(void) {
@@ -230,6 +262,7 @@ void sched_run(CPU *c, uint32_t main_key, SchedEntry entry, void *arg) {
     memset(slots, 0, sizeof slots);
     cur = -1;
     stopping = 0;
+    irq_depth = 0;
     tr_count = 0;
     tr_hash = 0xcbf29ce484222325ull;
 

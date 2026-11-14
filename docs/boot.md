@@ -31,7 +31,9 @@ an ihre Adressen) und ruft danach dieselben Funktionen auf wie `Entry`.
 | 3 | Endlosschleife `OS_SleepThread` → `OS_RescheduleThread` → `OS_SelectThread` | Thread wartet auf Interrupt, kein anderer Thread lauffähig | beim Schlafen vergeht ein Frame, Interrupt wird ausgelöst | SIMULIERT |
 | 4 | Interrupt-Handler wird nie aufgerufen | Spiel aktiviert nicht VBlank, sondern **VCount-Match** (IE = `0x00040004`: Bit 2 + Bit 18 IPC-Empfang) | pro Frame VCount-Match + VBlank auslösen | SIMULIERT |
 | 5 | Interrupt-Handler kehrt falsch zurück | **Recompiler-Fehler:** `ldr lr, =func_01ff8dd8 / bx r0` wurde als normaler Tail-Call übersetzt | Recompiler erkennt das Muster: erst `r0` aufrufen, dann `func_01ff8dd8` | – |
-| 6 | **Aktueller Halt:** `func_01ff8dd8` | Thread-Wechsel beim Verlassen des Interrupts (`subs pc, lr, #4`, Moduswechsel) | **offen → Thread-Modell nötig** | FEHLT |
+| 6 | `func_01ff8dd8` | Thread-Wechsel beim Verlassen des Interrupts (`subs pc, lr, #4`, Moduswechsel) | Thread-Modell mit Fibers → [`threads.md`](threads.md) | ORIGINAL/SIMULIERT |
+| 7 | Leerlauf-Thread „endet“ | rohe Sprung-Offsets (`b #-0x4`) nicht übersetzt | Recompiler wertet sie aus, `OS_Halt` = Frame vergeht | ORIGINAL |
+| 8 | **Aktueller Halt:** Start-Thread wartet | Anfrage an den ARM7 über PXI-Kanal 11 (Karte/Dateisystem), Befehlsblock bei `0x020626e0` | **offen → ARM7-Ersatz für Kartenzugriff** | FEHLT |
 
 Bis Hürde 6 laufen ~140 verschiedene Funktionen, darunter OS-, PXI-, RTC- und
 Interrupt-Initialisierung, Overlay 1 und schon die Tastenabfrage (`Pad_ReadAndUpdate`).

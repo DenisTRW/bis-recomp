@@ -211,10 +211,15 @@ def read_functions(asm_dir):
 
 # ---------------------------------------------------------------- Übersetzung
 
+FUNC_AT = {}   # (Modul, Adresse) -> Funktionsname, für rohe Sprungziele
+
+
 class Translator:
     def __init__(self, syms, func):
         self.syms = syms
         self.f = func
+        s = syms.get(func.name)
+        self.module = s[1] if s else "main"
         self.targets = set()
         self.todo = Counter()
         self.lines = []
@@ -319,8 +324,21 @@ class Translator:
     def emit(self, s):
         self.lines.append(s)
 
+    def raw_target(self, s, insn):
+        """dsd schreibt manche Ziele als rohen Offset: '#-0x8' = Befehlsadresse - 8."""
+        return (insn.addr + (imm(s) if not s.strip().startswith("#-") else -int(s.strip()[2:], 0))) & 0xFFFFFFFF
+
     def call(self, target, insn, tail=False):
         tgt = target.strip()
+        if tgt.startswith("#"):
+            a = self.raw_target(tgt, insn)
+            if self.f.addr <= a < self.f.end:
+                self.targets.add(a)
+                return f"goto I_{a:08x};"
+            name = FUNC_AT.get((self.module, a))
+            if name is None:
+                raise Unsupported(f"Sprungziel {tgt}")
+            tgt = name
         if tgt in self.syms and self.syms[tgt][2] == "function":
             code = f"{cname(tgt)}(c);"
         else:
@@ -352,8 +370,6 @@ class Translator:
             if a is not None and self.f.addr <= a < self.f.end:
                 self.targets.add(a)
                 return f"goto I_{a:08x};"
-            if ops[0].startswith("#"):
-                raise Unsupported("b mit Roh-Offset")
             return self.call(ops[0], insn, tail=True)
         if base == "bl":
             return self.call(ops[0], insn)
@@ -634,6 +650,20 @@ class Translator:
 
 # ---------------------------------------------------------------- Hauptprogramm
 
+def load_hle(path):
+    """hle.txt: dsd-Name -> (C-Funktion, Kategorie, Beschreibung)."""
+    hle = {}
+    if not path.exists():
+        return hle
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split(None, 3)
+        hle[parts[0]] = (parts[1], parts[2] if len(parts) > 2 else "", parts[3] if len(parts) > 3 else "")
+    return hle
+
+
 def module_of(func, syms):
     s = syms.get(func.name)
     return s[1] if s else "unknown"
@@ -646,6 +676,13 @@ def main():
         only = set(sys.argv[sys.argv.index("--only") + 1].split(","))
     syms = load_symbols(root / "config" / "eur" / "arm9")
     funcs = read_functions(root / "build" / "asm")
+    for name, (addr, mod, kind, _args) in syms.items():
+        if kind == "function":
+            FUNC_AT[(mod, addr)] = name
+    hle = load_hle(root / "recomp" / "hle.txt")
+    unknown = set(hle) - {f.name for f in funcs}
+    if unknown:
+        print(f"WARNUNG: HLE-Eintraege ohne Funktion: {', '.join(sorted(unknown))}")
     out = root / "build" / "recomp"
     if "--out" in sys.argv:
         out = Path(sys.argv[sys.argv.index("--out") + 1])
@@ -659,6 +696,22 @@ def main():
             continue
         t = Translator(syms, fn)
         lines = t.run()
+        if fn.name in hle:
+            # Original unter rc_orig_<Name>, rc_<Name> ruft den Ersatz
+            hfn, cat, desc = hle[fn.name]
+            orig = cname(fn.name).replace("rc_", "rc_orig_", 1)
+            lines = [l.replace(f"void {cname(fn.name)}(CPU *c)", f"void {orig}(CPU *c)", 1)
+                     .replace(f"RC_ENTER(0x{fn.addr:08x}u);", "/* RC_ENTER im Ersatz */", 1)
+                     for l in lines]
+            lines += [
+                f"/* HLE [{cat}] {desc} */",
+                f"void {hfn}(CPU *c);",
+                f"void {cname(fn.name)}(CPU *c) {{",
+                f"    RC_ENTER(0x{fn.addr:08x}u);",
+                f"    {hfn}(c);",
+                "}",
+            ]
+            stats["hle"] += 1
         per_mod[module_of(fn, syms)].append((fn, lines))
         n_todo = sum(t.todo.values())
         stats["funcs"] += 1
@@ -676,6 +729,9 @@ def main():
             for fn, lines in items:
                 fh.write("\n".join(lines) + "\n\n")
                 protos.append(f"void {cname(fn.name)}(CPU *c);")
+                if fn.name in hle:
+                    protos.append(f"void {cname(fn.name).replace('rc_', 'rc_orig_', 1)}(CPU *c);")
+                    protos.append(f"void {hle[fn.name][0]}(CPU *c);")
                 table.append((mod, fn.addr, cname(fn.name), fn.name))
     (out / "funcs.h").write_text("#pragma once\n#include \"recomp.h\"\n\n" + "\n".join(protos) + "\n")
     with open(out / "functable.c", "w", encoding="utf-8") as fh:
@@ -690,6 +746,7 @@ def main():
     print(f"Funktionen: {stats['funcs']}, davon vollständig übersetzt: {stats['funcs_ok']} "
           f"({100 * stats['funcs_ok'] / max(1, stats['funcs']):.1f} %)")
     print(f"Befehle: {stats['insns']}, übersetzt: {ok} ({100 * ok / max(1, stats['insns']):.2f} %)")
+    print(f"HLE-Ersatz: {stats['hle']} Funktionen")
     print("Häufigste TODOs:")
     for k, v in todo_total.most_common(20):
         print(f"  {v:7}  {k}")
