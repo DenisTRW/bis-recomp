@@ -23,7 +23,7 @@ Lege den ROM als `orig/baserom.nds` ab (wird von Git ignoriert).
 
 ## Meilensteine
 
-1. [ ] Toolchain einrichten (dsd, objdiff, ninja ✅ – mwccarm, Ghidra fehlen noch)
+1. [ ] Toolchain einrichten (dsd, objdiff, ninja, Ghidra 12.2 + JDK 25 ✅ – mwccarm fehlt noch)
 2. [ ] ROM mit dsd extrahieren und byte-identisch neu bauen
    - Extraktion und Rebuild funktionieren, alle Code- und Datenbereiche sind identisch.
    - Offen: Secure-Area-CRC (`0x6C`) und Header-CRC (`0x15E`). Dafür braucht dsd das ARM7-BIOS
@@ -37,6 +37,18 @@ tools\dsd.exe rom extract --rom orig\baserom.nds --output-path extract\eur
 tools\dsd.exe rom build --config extract\eur\config.yaml --rom build\rebuilt.nds
 tools\dsd.exe init --rom-config extract\eur\config.yaml --output-path config\eur --build-path build\eur
 ```
+
+### Ghidra
+
+Ghidra und das JDK liegen in `tools\`. In `tools\ghidra_*\support\launch.properties` muss stehen:
+`VMARGS=-Dapplication.settingsdir=<Projektpfad>\ghidra\settings`. Dann speichert Ghidra seine Einstellungen im Projekt.
+
+```
+scripts\ghidra.bat
+scripts\ghidra-headless.bat <Projektpfad>\ghidra bis_eur -import extract\eur\arm9\arm9.bin -loader BinaryLoader -loader-baseAddr 0x02004000 -processor ARM:LE:32:v5t
+```
+
+Das Ghidra-Projekt `ghidra\bis_eur` ist lokal und wird nicht committet.
 3. [ ] Erste kleine Funktionen matchen (Hilfsfunktionen: Mathe, Speicher, Strings)
 4. [ ] Dateisystem und Dekompression
 5. [ ] Text-/Script-System

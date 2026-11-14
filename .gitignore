@@ -12,6 +12,9 @@ build/
 *.elf
 *.map
 
+# Ghidra-Projekt und -Einstellungen (enthalten Original-Code)
+ghidra/
+
 # Lokale Tools (Compiler, dsd, objdiff, ...)
 tools/*
 !tools/.gitkeep
