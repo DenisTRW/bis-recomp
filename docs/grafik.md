@@ -185,6 +185,15 @@ reproduzierbar.
     `func_ov004_020922dc`. **Nächster Schritt:** dynamisch prüfen, welcher Code die
     Zustandsfunktion (`[obj+4]`) der Bildschirm-Objekte auf +0x20 setzen würde und warum
     der Weg über `0208c700` → `0208d0cc` (direkt Zustand 3) gewählt wird.
+  - Zustandsablauf des oberen Bildschirms (Byte `+0xd0`): 1 (Frame 2235) → 2 (2253, über
+    `0208d0cc`) → 3 (2267). Das ist der reguläre Weg; Zustand 3 wartet auf ein Einblenden,
+    das `0208c700` je nach **Eintrittsart** (Bits 8-10 von `[0x0212778c+0x68]`) startet.
+    Die Eintrittsart ist 0 (Struktur frisch genullt in Frame 2231, danach nie gesetzt), und
+    `data_020564e0` (Fall 1) wird nach „Start“ gar nicht beschrieben. Vermutung: Beim echten
+    Spiel kommt die Eintrittsart aus den Kartenwechsel-Parametern des Neues-Spiel-Ablaufs;
+    bei uns fehlen sie. Offene Frage, die sich am schnellsten mit einem Vergleich auf echter
+    Hardware/Emulator klären lässt: Welchen Wert haben `[0x0212778c+0x68]` und
+    `data_020564e0` beim Betreten von Toad Town?
   - Neue Hilfen: `BIS_PROFILE_FROM=frame` (Zähler „Häufigste“ ab diesem Frame), der Bericht
     zeigt die zuletzt außerhalb von Interrupts betretene Funktion und deren letzte Lesezugriffe
     (findet Warteschleifen ohne Funktionsaufrufe).
