@@ -217,6 +217,10 @@ static void dma_copy(int ch) {
     }
     dma_isrc[ch] = src; dma_idst[ch] = dst;
     dma_count++;
+    if (cnt & 0x40000000u) {   /* Bit 30: Interrupt am Ende (IF Bit 8 + Kanal) */
+        HLE(ORIGINAL, "DMA-Ende-Interrupt");
+        irq_pending_extra |= 1u << (8 + ch);
+    }
     /* Repeat (Bit 25) bei VBlank-DMA: bleibt aktiv, startet beim nächsten VBlank erneut */
     if (!(((cnt >> 27) & 7) == 1 && ((cnt >> 25) & 1))) set_io32(base + 8, cnt & ~0x80000000u);
 }
@@ -245,6 +249,7 @@ static void dma_card(void) {
         }
         dma_idst[ch] = dst;
         dma_count++;
+        if (cnt & 0x40000000u) irq_pending_extra |= 1u << (8 + ch);
         if (!((cnt >> 25) & 1)) set_io32(base + 8, cnt & ~0x80000000u);   /* ohne Repeat: fertig */
         return;
     }
@@ -284,6 +289,18 @@ static void card_fire(void) {
     dma_card();
     card_done_check();
     platform_inhibit_irq--;
+}
+
+/* GX-FIFO-Interrupt (IF Bit 21): GXSTAT Bits 30-31 = 1 "weniger als halb voll", 2 "leer".
+ * Unsere Geometrie-Engine nimmt alles sofort an, die FIFO ist also immer leer und beide
+ * Bedingungen gelten dauernd. Genutzt vom SDK für asynchrones Senden von 3D-Befehlen
+ * (0x0203a598, Handler 0x0203a690). Pegelgesteuert wie auf der Hardware. */
+static void gx_fifo_irq(void) {
+    uint32_t mode = io32(0x600) >> 30;
+    if (mode == 1 || mode == 2) {
+        HLE(SIMULIERT, "3D: GX-FIFO-Interrupt (FIFO immer leer)");
+        irq_pending_extra |= 1u << 21;
+    }
 }
 
 static void card_done_check(void) {
@@ -369,6 +386,13 @@ static void io_write_inner(uint32_t a, uint32_t v, int size) {
         return;
     }
     if ((off & ~3u) == 0x600 && off + (uint32_t)size > 0x601 && ((size == 1 ? v << 8 : v) & 0x8000)) gpu3d_ack_error();
+    if ((off & ~3u) == 0x600 && off + (uint32_t)size > 0x603) {   /* GXSTAT Bits 30-31: FIFO-Interrupt */
+        uint32_t keep = io32(0x600) & ~0xc0000000u;
+        uint32_t nv = size == 4 ? v : size == 2 ? v << 16 : v << 24;
+        set_io32(0x600, keep | (nv & 0xc0000000u));
+        gx_fifo_irq();
+        return;
+    }
     if (off >= 0x214 && off < 0x218) {              /* IF: 1 schreiben = löschen */
         uint32_t mask = (size == 4 ? v : size == 2 ? (v & 0xffff) : (v & 0xff)) << ((off - 0x214) * 8);
         set_io32(0x214, io32(0x214) & ~mask);
@@ -377,6 +401,7 @@ static void io_write_inner(uint32_t a, uint32_t v, int size) {
          * Übertragung und der Karten-Handler überspringt einen Block. Das setzt voraus, dass
          * die Übertragung Zeit braucht (card_delay > 0), wie auf der Hardware. */
         if (card_delay) irq_pending_extra &= ~mask;
+        gx_fifo_irq();   /* pegelgesteuert: kommt sofort wieder, solange die Bedingung gilt */
         return;
     }
     int dma_ch = (off >= 0xb8 && off < 0xe0 && (off - 0xb0) % 12 >= 8) ? (int)((off - 0xb0) / 12) : -1;
@@ -495,7 +520,9 @@ static void watch(uint32_t a, uint32_t v, int size) {
 
 static uint32_t rwatch_addr;   /* Fehlersuche: BIS_RWATCH=adresse (Lesezugriffe auf dieses Wort) */
 static void rwatch_hit(uint32_t a, int size);
-#define RWATCH(a, s) do { if (rwatch_addr && ((a) & ~3u) == rwatch_addr) rwatch_hit(a, s); } while (0)
+static uint32_t rd_ring[16], rd_pos;   /* letzte Lesezugriffe außerhalb von Interrupts (Bericht) */
+#define RWATCH(a, s) do { if (!in_irq) rd_ring[rd_pos++ & 15] = (a); \
+    if (rwatch_addr && ((a) & ~3u) == rwatch_addr) rwatch_hit(a, s); } while (0)
 uint8_t rd8(uint32_t a) {
     BUDGET(); POLL_IRQ(); RWATCH(a, 1);
     uint8_t *p = ptr(a); if (p) return *p;
@@ -823,6 +850,12 @@ static void script_apply(void) {
 static void vblank(CPU *c) {
     sched_trace(TR_TICK, (uint32_t)frames, 0);
     frames++;
+    {   /* Fehlersuche: BIS_PROFILE_FROM=frame zählt "Häufigste" erst ab diesem Frame */
+        static long long prof_from = -2;
+        if (prof_from == -2) prof_from = getenv("BIS_PROFILE_FROM") ? atoll(getenv("BIS_PROFILE_FROM")) : -1;
+        if (prof_from >= 0 && (long long)frames == prof_from)
+            for (unsigned i = 0; i < nfns; i++) fns[i].calls = 0;
+    }
     platform_inhibit_irq++;
     gpu3d_vblank();     /* 3D: Liste des vorigen Frames zeichnen, neue übernehmen */
     dma_vblank();
@@ -991,6 +1024,10 @@ void rc_mcr(CPU *c, int a, int b, int d, int e, uint32_t v) {
         } else {
             halts_locked = 0;
         }
+        /* Läuft eine Karten-Übertragung, ist sie lange vor dem nächsten VBlank fertig
+         * (~0,1 ms je Block) und ihr Interrupt weckt den Prozessor. Ohne das zählte der
+         * Countdown im Halt nicht weiter und jeder Block kostete einen Frame. */
+        if (card_countdown || card_fire_pending) { card_countdown = 0; card_fire(); }
         /* Steht schon ein Interrupt an (z. B. ARM7-Antwort), weckt der den
          * Prozessor sofort; sonst vergeht ein Frame. */
         if (!deliver_pending(c)) vblank(c);
@@ -1056,6 +1093,10 @@ static void report(void) {
         uint32_t a = ring[(ring_pos - 24 + i) & 63];
         if (a) printf("  0x%08x  %s\n", a, fn_name(a));
     }
+
+    printf("Zuletzt ausserhalb von Interrupts: %s, gelesen:", fn_name(last_outside_irq));
+    for (unsigned i = 0; i < 16; i++) printf(" %08x", rd_ring[(rd_pos + i) & 15]);
+    printf("\n");
 
     FnInfo **sorted = malloc(nfns * sizeof *sorted);
     unsigned used = 0;

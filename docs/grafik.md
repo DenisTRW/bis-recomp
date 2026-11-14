@@ -104,8 +104,24 @@ reproduzierbar.
     „Start“ (`BIS_INPUT="1100:start,1400:a,1900:a,2200:a"`) wird das `FSFile` nicht mehr
     zerstört. Das Bild bleibt trotzdem schwarz: In Frame 2231 setzt die neue Szene
     (`0x021117e8`) alle VRAM-Bänke auf 0 und ordnet sie bis Frame 2700 nicht neu zu; die
-    meiste Zeit läuft `func_ov125_02077a70`. **Nächster Schritt:** klären, worauf die Szene
-    dort wartet. Der Standard ist noch „sofort“ (`BIS_CARD_DELAY=0`).
+    meiste Zeit läuft `func_ov125_02077a70`. Der Standard ist noch „sofort“
+    (`BIS_CARD_DELAY=0`).
+  - Das Schwarz ist gewollt: Master-Helligkeit `0x8010` (voll abgedunkelt) bis zum Ende des
+    Ladens. Drei Ursachen für das Hängen davor sind behoben:
+    1. **Karte im `OS_Halt`:** Schläft der Prozessor, zählte der Countdown nicht weiter, jeder
+       Block kostete bis zu 19 Frames. Jetzt wird eine laufende Übertragung im Halt fertig.
+    2. **DMA-Ende-Interrupt (CNT Bit 30 → IF Bit 8+Kanal) fehlte.** Die Szene sendet 3D-Daten
+       per DMA in die GX-FIFO (`0x0203a79c`, Rückruf über `0x0203a854`) und wartet in
+       `func_ov006_02123680` auf ein Flag, das nur der Rückruf löscht.
+    3. **GX-FIFO-Interrupt (IF Bit 21)** nach GXSTAT Bits 30-31 ergänzt (pegelgesteuert,
+       FIFO immer leer, SIMULIERT), genutzt von `0x0203a598`.
+  - Danach zeichnet die Szene ~900 Polygone und arbeitet zeitverteilt über `VCOUNT`
+    (`func_ov003_0206b788`), bleibt aber bis Frame 6000 abgedunkelt. **Nächster Schritt:**
+    herausfinden, was das Einblenden auslöst (Kandidaten: Sound-Antworten des ARM7 über PXI,
+    `VCOUNT`-Nachbildung „pro Lesezugriff“).
+  - Neue Hilfen: `BIS_PROFILE_FROM=frame` (Zähler „Häufigste“ ab diesem Frame), der Bericht
+    zeigt die zuletzt außerhalb von Interrupts betretene Funktion und deren letzte Lesezugriffe
+    (findet Warteschleifen ohne Funktionsaufrufe).
 
 Fehlersuche: `boot_test.exe … [funktion_hex] [adresse:laenge]` zeigt Argumente samt Frame
 und Vorgeschichte bzw. Schreibzugriffe mit Frame, `lr`, `sp` und Vorgeschichte. Umgebungsvariablen:
