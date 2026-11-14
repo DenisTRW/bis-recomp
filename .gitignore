@@ -1,4 +1,4 @@
-# Original-ROM und alles daraus Extrahierte – NIEMALS committen
+# Original ROM and everything extracted from it - NEVER commit
 orig/*
 !orig/.gitkeep
 *.nds
@@ -6,16 +6,16 @@ orig/*
 extract/
 assets/
 
-# Build-Ausgaben
+# Build output
 build/
 *.o
 *.elf
 *.map
 
-# Ghidra-Projekt und -Einstellungen (enthalten Original-Code)
+# Ghidra project and settings (contain original code)
 /ghidra/
 
-# Lokale Tools (Compiler, dsd, objdiff, ...)
+# Local tools (compiler, dsd, objdiff, ...)
 tools/*
 !tools/.gitkeep
 
@@ -24,3 +24,7 @@ __pycache__/
 *.pyc
 .vscode/
 .idea/
+
+# Launcher build output
+/RecompLauncher.exe
+/games.json

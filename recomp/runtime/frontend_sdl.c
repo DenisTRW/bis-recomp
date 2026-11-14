@@ -22,7 +22,7 @@ static uint64_t fps_t0, fps_frames;
 
 int frontend_init(void) {
     if (!SDL_Init(SDL_INIT_VIDEO)) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 0; }
-    win = SDL_CreateWindow("Mario & Luigi: Bowser's Inside Story - PC (Prototyp)", 512, 768, SDL_WINDOW_RESIZABLE);
+    win = SDL_CreateWindow("Mario & Luigi: Bowser's Inside Story - PC (prototype)", 512, 768, SDL_WINDOW_RESIZABLE);
     if (!win) { fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError()); return 0; }
     ren = SDL_CreateRenderer(win, NULL);
     if (!ren) { fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError()); return 0; }
@@ -56,7 +56,7 @@ void frontend_present(const uint32_t *top, const uint32_t *bottom) {
     uint64_t now = SDL_GetTicksNS();
     if (now - fps_t0 >= 1000000000ull) {
         char title[160];
-        SDL_snprintf(title, sizeof title, "Mario & Luigi: Bowser's Inside Story - PC (Prototyp) - %.1f fps",
+        SDL_snprintf(title, sizeof title, "Mario & Luigi: Bowser's Inside Story - PC (prototype) - %.1f fps",
                      (double)fps_frames * 1e9 / (double)(now - fps_t0));
         SDL_SetWindowTitle(win, title);
         fps_t0 = now;
@@ -96,7 +96,7 @@ int frontend_poll(uint16_t *keys, uint16_t *xy) {
 
 void frontend_wait_close(const char *reason) {
     char title[256];
-    SDL_snprintf(title, sizeof title, "Angehalten: %s  (Bericht in der Konsole, Fenster schliessen zum Beenden)", reason);
+    SDL_snprintf(title, sizeof title, "Stopped: %s  (report in the console or log, close the window to exit)", reason);
     SDL_SetWindowTitle(win, title);
     for (;;) {
         SDL_Event e;

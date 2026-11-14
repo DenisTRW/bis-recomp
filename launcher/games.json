@@ -1,0 +1,43 @@
+{
+  "games": [
+    {
+      "id": "bis",
+      "title": "Mario & Luigi: Bowser's Inside Story",
+      "subtitle": "Static recompilation · native PC port",
+      "platform": "Nintendo DS",
+      "region": "Europe",
+      "accent": "#E5484D",
+      "status": "Work in progress — playable up to the file select screen",
+      "description": "The original ARM9 code is recompiled to C and runs natively on your PC. Graphics, input and the DS hardware are reimplemented. No game data is included: you provide your own copy of the game.",
+      "rom": {
+        "label": "Europe (CLJP, Revision 0)",
+        "sha1": "5F35BFBF79A0947740795DD770D99E8EEA3AC85E",
+        "filter": "Nintendo DS ROM (*.nds)|*.nds",
+        "target": "orig/baserom.nds"
+      },
+      "setup": [
+        {
+          "label": "Extracting game data",
+          "exe": "tools/dsd.exe",
+          "args": "rom extract --rom \"{rom}\" --output-path extract/eur",
+          "skipIfExists": "extract/eur/arm9/arm9.bin"
+        }
+      ],
+      "launch": {
+        "exe": "build/pc/bis_pc.exe",
+        "args": "extract/eur",
+        "buildHint": "The game has not been built yet. Run recomp\\runtime\\run_pc.bat once."
+      },
+      "controls": [
+        ["Arrow keys", "D-Pad"],
+        ["X / C", "A / B"],
+        ["S / D", "X / Y"],
+        ["Q / W", "L / R"],
+        ["Enter", "Start"],
+        ["Backspace", "Select"],
+        ["F11", "Fullscreen"],
+        ["Esc", "Quit"]
+      ]
+    }
+  ]
+}
