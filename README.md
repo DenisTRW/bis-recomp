@@ -1,6 +1,7 @@
 # bis-recomp
 
-> 🤖 **Built with AI:** The large majority of this project (recompiler, runtime, 2D/3D renderers,
+> [!IMPORTANT]
+> **Built with AI:** The large majority of this project (recompiler, runtime, 2D/3D renderers,
 > launcher, tests and documentation) was written by **Claude Code (Claude Opus 5.5)** by Anthropic,
 > working together with and directed by [DenisTRW](https://github.com/DenisTRW).
 
