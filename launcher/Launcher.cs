@@ -224,6 +224,117 @@ namespace RecompLauncher
         }
     }
 
+    // ------------------------------------------------------------------ animations
+
+    static class Anim
+    {
+        // Off for --snapshot and when the user disables animations in the settings
+        public static bool Enabled = true;
+        public static bool ForceOff;
+        static readonly IEasingFunction Ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+
+        static TranslateTransform Translate(UIElement el)
+        {
+            var tt = el.RenderTransform as TranslateTransform;
+            if (tt == null) { tt = new TranslateTransform(); el.RenderTransform = tt; }
+            return tt;
+        }
+
+        // Fade in while sliding by (dx, dy) into place, after a delay
+        public static void In(UIElement el, double delayMs, double dx, double dy, double durMs)
+        {
+            if (!Enabled) { el.BeginAnimation(UIElement.OpacityProperty, null); el.Opacity = 1; return; }
+            var tt = Translate(el);
+            var begin = TimeSpan.FromMilliseconds(delayMs);
+            var dur = TimeSpan.FromMilliseconds(durMs);
+            el.Opacity = 0;
+            el.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, dur) { BeginTime = begin, EasingFunction = Ease });
+            tt.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(dx, 0, dur) { BeginTime = begin, EasingFunction = Ease });
+            tt.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(dy, 0, dur) { BeginTime = begin, EasingFunction = Ease });
+        }
+
+        public static void Up(UIElement el, double delayMs) { In(el, delayMs, 0, 22, 520); }
+
+        // Hidden until scrolled into view, then revealed once
+        public static void RevealOnScroll(ScrollViewer sv, IList<FrameworkElement> items)
+        {
+            if (!Enabled) return;
+            var pending = new List<FrameworkElement>(items);
+            foreach (var el in pending) el.Opacity = 0;
+            Action check = delegate
+            {
+                for (int i = pending.Count - 1; i >= 0; i--)
+                {
+                    var el = pending[i];
+                    if (!el.IsVisible || !sv.IsVisible) continue;
+                    double top;
+                    try { top = el.TransformToAncestor(sv).Transform(new Point(0, 0)).Y; } catch (InvalidOperationException) { continue; }
+                    if (top < sv.ViewportHeight - 30)
+                    {
+                        pending.RemoveAt(i);
+                        In(el, 60, 0, 34, 620);
+                    }
+                }
+            };
+            sv.ScrollChanged += delegate { check(); };
+            sv.IsVisibleChanged += delegate { sv.Dispatcher.BeginInvoke(check, System.Windows.Threading.DispatcherPriority.Loaded); };
+            sv.Loaded += delegate { sv.Dispatcher.BeginInvoke(check, System.Windows.Threading.DispatcherPriority.Loaded); };
+        }
+
+        // Mouse wheel glides to the target offset instead of jumping
+        public static void SmoothScroll(ScrollViewer sv)
+        {
+            double target = 0;
+            bool running = false;
+            EventHandler tick = null;
+            tick = delegate
+            {
+                double cur = sv.VerticalOffset;
+                double next = cur + (target - cur) * 0.2;
+                if (Math.Abs(target - next) < 0.5) { next = target; CompositionTarget.Rendering -= tick; running = false; }
+                sv.ScrollToVerticalOffset(next);
+            };
+            sv.PreviewMouseWheel += (s, e) =>
+            {
+                if (!Enabled) return;
+                e.Handled = true;
+                if (!running) target = sv.VerticalOffset;
+                target = Math.Max(0, Math.Min(sv.ScrollableHeight, target - e.Delta * 1.1));
+                if (!running) { running = true; CompositionTarget.Rendering += tick; }
+            };
+        }
+
+        // Slight zoom on hover
+        public static void HoverGrow(FrameworkElement el, double factor)
+        {
+            var st = new ScaleTransform(1, 1);
+            el.RenderTransformOrigin = new Point(0.5, 0.5);
+            el.RenderTransform = st;
+            el.MouseEnter += delegate { Scale(st, factor, 180); };
+            el.MouseLeave += delegate { Scale(st, 1, 220); };
+        }
+
+        static void Scale(ScaleTransform st, double to, double ms)
+        {
+            if (!Enabled) { st.ScaleX = st.ScaleY = to; return; }
+            var a = new DoubleAnimation(to, TimeSpan.FromMilliseconds(ms)) { EasingFunction = Ease };
+            st.BeginAnimation(ScaleTransform.ScaleXProperty, a);
+            st.BeginAnimation(ScaleTransform.ScaleYProperty, a);
+        }
+
+        // Very slow back-and-forth zoom for the backdrop image
+        public static void KenBurns(FrameworkElement el)
+        {
+            if (!Enabled) return;
+            var st = new ScaleTransform(1, 1);
+            el.RenderTransformOrigin = new Point(0.5, 0.4);
+            el.RenderTransform = st;
+            var a = new DoubleAnimation(1, 1.12, TimeSpan.FromSeconds(18)) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut } };
+            st.BeginAnimation(ScaleTransform.ScaleXProperty, a);
+            st.BeginAnimation(ScaleTransform.ScaleYProperty, a);
+        }
+    }
+
     // ------------------------------------------------------------------ window
 
     class LauncherWindow : Window
@@ -270,9 +381,21 @@ namespace RecompLauncher
             WindowChrome.SetWindowChrome(this, new WindowChrome { CaptionHeight = 44, ResizeBorderThickness = new Thickness(6), GlassFrameThickness = new Thickness(0), CornerRadius = new CornerRadius(0) });
 
             FindScreenshots();
+            Anim.Enabled = !Anim.ForceOff && Setting("animations", "1") == "1";
             Content = BuildUi();
             FillGallery();
             ShowTab(false);
+            if (Anim.Enabled)
+            {
+                // Opening: the window fades in, then the first screen builds up piece by piece
+                Opacity = 0;
+                foreach (var el in intro) el.Opacity = 0;
+                Loaded += delegate
+                {
+                    BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(280)));
+                    for (int i = 0; i < intro.Count; i++) Anim.Up(intro[i], 90 + i * 110);
+                };
+            }
             RefreshState();
             PreviewKeyDown += (s, e) =>
             {
@@ -386,7 +509,7 @@ namespace RecompLauncher
             content.Children.Add(label);
             navButton.Content = content;
             var page = settingsTab ? settingsPage : overviewPage;
-            page.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200)));
+            if (IsLoaded) Anim.In(page, 0, settingsTab ? 46 : -46, 0, 360);   // slide in from the side we came from
             if (settingsTab) galleryTimer.Stop(); else if (shots.Count > 1) galleryTimer.Start();
         }
 
@@ -398,6 +521,7 @@ namespace RecompLauncher
             var img = new Image { Stretch = Stretch.UniformToFill, Margin = new Thickness(-90), Opacity = 0.5, Effect = new BlurEffect { Radius = 70, KernelType = KernelType.Gaussian } };
             if (coverPath != null) img.Source = LoadBitmap(coverPath, 600);
             backdrops.Add(img);
+            Anim.KenBurns(img);
             backdropHost.Children.Add(img);
             // Accent glow, visible mainly when there is no cover image
             backdropHost.Children.Add(new Border
@@ -422,21 +546,37 @@ namespace RecompLauncher
             title.TextAlignment = TextAlignment.Center;
             title.Effect = new DropShadowEffect { BlurRadius = 22, ShadowDepth = 0, Opacity = 0.6 };
             content.Children.Add(title);
+            intro.Add(title);
             if (subtitle != null)
             {
                 var sub = Theme.Label(subtitle, 15, Theme.TextDim, FontWeights.Normal);
                 sub.TextAlignment = TextAlignment.Center;
                 sub.Margin = new Thickness(0, 8, 0, 0);
                 content.Children.Add(sub);
+                intro.Add(sub);
             }
-            if (below != null) content.Children.Add(below);
+            if (below != null)
+            {
+                content.Children.Add(below);
+                var panel = below as Panel;
+                if (panel != null) foreach (UIElement c in panel.Children) intro.Add(c); else intro.Add(below);
+            }
             hero.Children.Add(content);
             return hero;
         }
 
-        static ScrollViewer PageScroll(UIElement content)
+        // Elements of the first screen, shown one after another when the window opens
+        readonly List<UIElement> intro = new List<UIElement>();
+        // Sections that appear when scrolled into view, per page
+        List<FrameworkElement> reveal = new List<FrameworkElement>();
+
+        ScrollViewer PageScroll(UIElement content)
         {
-            return new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Hidden, Content = content, Focusable = false };
+            var sv = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Hidden, Content = content, Focusable = false };
+            Anim.SmoothScroll(sv);
+            Anim.RevealOnScroll(sv, reveal);
+            reveal = new List<FrameworkElement>();
+            return sv;
         }
 
         StackPanel Column()
@@ -483,6 +623,7 @@ namespace RecompLauncher
             head.Children.Add(t);
             p.Children.Add(head);
             p.Children.Add(body);
+            reveal.Add(p);
             return p;
         }
 
@@ -551,6 +692,7 @@ namespace RecompLauncher
             playButton.HorizontalAlignment = HorizontalAlignment.Center;
             playButton.Effect = new DropShadowEffect { Color = Theme.Accent, BlurRadius = 30, ShadowDepth = 0, Opacity = 0.55 };
             playButton.Click += delegate { Play(); };
+            Anim.HoverGrow(playButton, 1.05);
             p.Children.Add(playButton);
 
             var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 16, 0, 0) };
@@ -683,6 +825,7 @@ namespace RecompLauncher
                 RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.HighQuality);
                 var t = new Border { Width = 62, Height = 62, CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(2), BorderBrush = Brushes.Transparent, Margin = new Thickness(5, 0, 5, 0), Cursor = Cursors.Hand, ClipToBounds = true, Child = img, Background = Theme.Panel };
                 t.MouseLeftButtonUp += delegate { Show(k, true); };
+                Anim.HoverGrow(t, 1.1);
                 thumbs.Children.Add(t);
                 dots.Children.Add(new Border { Width = 6, Height = 6, CornerRadius = new CornerRadius(3), Margin = new Thickness(3, 0, 3, 0), Background = Theme.TextFaint });
             }
@@ -714,13 +857,14 @@ namespace RecompLauncher
         void Show(int index, bool manual)
         {
             if (shots.Count == 0) return;
+            int dir = index < shotIndex ? -1 : 1;   // slide in from the direction we are moving to
             shotIndex = ((index % shots.Count) + shots.Count) % shots.Count;
             var bmp = LoadBitmap(shots[shotIndex], 0);
             shotImage.Source = bmp;
             // Small console frames stay pixel-sharp, photos (the cover) are scaled smoothly
             bool pixelArt = bmp != null && bmp.PixelHeight <= 400;
             RenderOptions.SetBitmapScalingMode(shotImage, pixelArt ? BitmapScalingMode.NearestNeighbor : BitmapScalingMode.HighQuality);
-            shotImage.BeginAnimation(OpacityProperty, new DoubleAnimation(0.15, 1, TimeSpan.FromMilliseconds(260)));
+            if (IsLoaded) Anim.In(shotImage, 0, dir * 60, 0, 380);
             for (int i = 0; i < thumbs.Children.Count; i++)
             {
                 ((Border)thumbs.Children[i]).BorderBrush = i == shotIndex ? Theme.AccentBrush : Brushes.Transparent;
@@ -746,6 +890,7 @@ namespace RecompLauncher
             display.Children.Add(SettingRow("Start in fullscreen", "You can always switch with F11 while playing.", Toggle("fullscreen", false)));
             display.Children.Add(SettingRow("Pixel filter", "Sharp keeps the original pixels, smooth blurs them slightly when scaled.",
                 Segmented("filter", new[] { "sharp", "smooth" }, new[] { "Sharp", "Smooth" }, "sharp")));
+            display.Children.Add(SettingRow("Launcher animations", "Fades, slides and smooth scrolling in this launcher. Applied the next time it opens.", Toggle("animations", true)));
             col.Children.Add(Section("Display", display));
 
             var exp = new StackPanel();
@@ -778,7 +923,7 @@ namespace RecompLauncher
             var reset = Theme.MakeButton("Reset settings", Theme.Control, Theme.Text, 12.5, new Thickness(14, 7, 14, 8), 8);
             reset.Click += delegate
             {
-                foreach (var k in new[] { "scale", "fullscreen", "filter", "cardTiming" }) settings.Data.Remove(game.Id + ":" + k);
+                foreach (var k in new[] { "scale", "fullscreen", "filter", "cardTiming", "animations" }) settings.Data.Remove(game.Id + ":" + k);
                 settings.Save();
                 var newPage = BuildSettings();
                 pageHost.Children.Remove(settingsPage);
@@ -1127,6 +1272,7 @@ namespace RecompLauncher
         {
             string baseDir = AppDomain.CurrentDomain.BaseDirectory;
             var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
+            Anim.ForceOff = args.Length >= 2 && args[0] == "--snapshot";   // still image: no animations
             var win = new LauncherWindow(baseDir);
             // --snapshot <file.png> [settings]: render the window to an image and exit (for the README)
             if (args.Length >= 2 && args[0] == "--snapshot")
