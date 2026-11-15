@@ -38,7 +38,7 @@ card, the ARM7 co-processor, …).
 | ✅ | New game: opening scene |
 | ✅ | Walking and talking in the field |
 | ⬜ | Battles |
-| ⬜ | Sound and music |
+| ✅ | Sound and music (own ARM7 sound driver; no vibrato/portamento yet) |
 | ⬜ | Touch screen and controller |
 | ⬜ | Saving and loading in game |
 | ⬜ | Full playthrough |
@@ -190,7 +190,7 @@ ARM7, graphics, recompiler and copy protection.
 - [x] RecompLauncher description (`recomplauncher.json`) for local builds, save files
 - [ ] Touch screen via mouse, controller support
 - [ ] Setup that builds the game on the player's PC from their own ROM (releases with tools only)
-- [ ] Sound
+- [x] Sound (sequencer, instruments, mixer; LFO/portamento still missing)
 - [ ] Remaining 3D features (shadows, fog, edge marking, anti-aliasing)
 - [ ] First playable version
 
