@@ -32,6 +32,7 @@
 #include "vram.h"
 #include "render2d.h"
 #include "gpu3d.h"
+#include "sound.h"
 #include "png.h"
 void hostprof_start(void);
 void hostprof_stop(void);
@@ -121,6 +122,9 @@ static inline uint8_t *ptr(uint32_t a) {
     default: return NULL;
     }
 }
+
+/* Speicherzugriff ohne Zeitverbrauch (für den ARM7-Ersatz, der parallel zum ARM9 läuft) */
+uint8_t *platform_mem(uint32_t a) { return ptr(a); }
 
 /* ---- I/O-Statistik */
 #define IO_STAT 4096
@@ -1019,6 +1023,7 @@ static void vblank(CPU *c) {
     gpu3d_vblank();     /* 3D: neue Liste übernehmen und sofort zeichnen */
     gx_fifo_irq();      /* FIFO wurde geleert: ggf. Interrupt */
     dma_vblank();
+    sound_vblank();     /* ARM7-Sound: Sequenzen, Alarme, Status, Mixer */
     platform_inhibit_irq--;
 #ifndef PLATFORM_SDL
     script_apply();

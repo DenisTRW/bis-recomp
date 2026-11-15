@@ -12,10 +12,12 @@
 #include <SDL3/SDL.h>
 #include <stdio.h>
 #include "frontend.h"
+#include "sound.h"
 
 static SDL_Window *win;
 static SDL_Renderer *ren;
 static SDL_Texture *tex;
+static SDL_AudioStream *audio;   /* Ton vom Sound-Treiber-Ersatz (sound.c), 32728 Hz Stereo */
 static uint64_t next_frame_ns;
 static uint64_t fps_t0, fps_frames;
 
@@ -24,7 +26,8 @@ static uint64_t fps_t0, fps_frames;
 /* Einstellungen vom Launcher (Umgebungsvariablen):
  *   BIS_SCALE=1..4      Fenstergröße als Vielfaches von 256x384 (Standard 2, passt sich dem Bildschirm an)
  *   BIS_FULLSCREEN=1    im Vollbild starten
- *   BIS_FILTER=smooth   weiche statt scharfer Pixel */
+ *   BIS_FILTER=smooth   weiche statt scharfer Pixel
+ *   BIS_MUTE=1          ohne Ton */
 static int env_int(const char *name, int def) {
     const char *s = SDL_getenv(name);
     return s && *s ? SDL_atoi(s) : def;
@@ -32,6 +35,12 @@ static int env_int(const char *name, int def) {
 
 int frontend_init(void) {
     if (!SDL_Init(SDL_INIT_VIDEO)) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 0; }
+    if (!env_int("BIS_MUTE", 0) && SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+        SDL_AudioSpec spec = { SDL_AUDIO_S16, 2, 32728 };
+        audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+        if (audio) SDL_ResumeAudioStreamDevice(audio);
+        else fprintf(stderr, "Ton: %s\n", SDL_GetError());
+    }
     int scale = env_int("BIS_SCALE", 2);
     if (scale < 1) scale = 1;
     if (scale > 4) scale = 4;
@@ -69,6 +78,15 @@ void frontend_present(const uint32_t *top, const uint32_t *bottom) {
     SDL_RenderClear(ren);
     SDL_RenderTexture(ren, tex, NULL, NULL);
     SDL_RenderPresent(ren);
+
+    /* Ton dieses Bildes weitergeben. Liegt schon viel in der Warteschlange (Spiel lief
+     * schneller als Echtzeit), verwerfen statt die Verzoegerung wachsen zu lassen. */
+    {
+        static int16_t buf[4096 * 2];
+        int n = sound_take_samples(buf, 4096);
+        if (audio && n && SDL_GetAudioStreamQueued(audio) < 32728 * 4 / 6)
+            SDL_PutAudioStreamData(audio, buf, n * 4);
+    }
 
     /* Bildrate im Fenstertitel */
     fps_frames++;

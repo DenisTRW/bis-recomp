@@ -18,6 +18,7 @@
 #include <string.h>
 #include "platform.h"
 #include "arm7_hle.h"
+#include "sound.h"
 
 #define TAG_FS 11
 
@@ -31,6 +32,7 @@ static void reply(uint32_t tag, uint32_t flag, uint32_t data) {
     if (recv_tail - recv_head >= RECV_MAX) { HLE(FEHLT, "ARM7: Empfangs-FIFO voll, Antwort verworfen"); return; }
     recv_q[recv_tail++ % RECV_MAX] = (tag & 0x1f) | (flag & 1) << 5 | data << 6;
 }
+void arm7_reply(uint32_t tag, uint32_t flag, uint32_t data) { reply(tag, flag, data); }   /* sound.c: Alarme */
 
 int arm7_recv_empty(void) { return recv_head == recv_tail; }
 
@@ -231,7 +233,7 @@ static void tp_command(uint32_t data) {
 /* Der ARM9 schickt pro "Flush" die Adresse einer Befehlsliste. Der echte ARM7
  * arbeitet sie ab und erhöht danach SNDSharedWork.finishCommandTag (+0). Darauf
  * wartet der ARM9 (0x0203b9a8 liest den Zähler, dazwischen OS_SpinWait).
- * Wir führen die Befehle (noch) nicht aus -> kein Ton, aber kein Warten. */
+ * Abgearbeitet werden die Befehle vom Sound-Treiber-Ersatz (sound.c). */
 static void snd_command(uint32_t data) {
     if (data == 0) {
         /* 0x0203b7cc: "jetzt verarbeiten"-Signal ohne neue Liste – zählt nicht */
@@ -250,23 +252,11 @@ static void snd_command(uint32_t data) {
             fprintf(stderr, "  [snd] Befehl %2u  %08x %08x %08x %08x\n", id, rd32(c + 8), rd32(c + 12), rd32(c + 16), rd32(c + 20));
         }
     }
-    if (sw && getenv("BIS_SND_STATUS")) {
-        /* EXPERIMENT: Spielerstatus pflegen (SNDSharedWork.playerStatus, +4).
-         * Befehle: 0 START_SEQ, 1 STOP_SEQ, 2 PREPARE_SEQ, 3 START_PREPARED_SEQ; arg0 = Spieler */
-        int n = 0;
-        for (uint32_t c = data; c && n < 256; c = rd32(c), n++) {
-            uint32_t id = rd32(c + 4), p = rd32(c + 8) & 15;
-            uint32_t st = rd32(sw + 4);
-            if (id == 0 || id == 2 || id == 3) st |= 1u << p;
-            else if (id == 1) st &= ~(1u << p);
-            else continue;
-            wr32(sw + 4, st);
-            HLE(SIMULIERT, "ARM7 Sound: Spielerstatus aus Start/Stopp-Befehlen (ohne Wiedergabe)");
-        }
-    }
+    sound_command_list(data);
+    sw = rd32(SND_SHARED_WORK_PTR);
     if (sw) {
         wr32(sw, rd32(sw) + 1);
-        HLE(SIMULIERT, "ARM7 Sound: Befehlsliste als erledigt gemeldet (kein Ton)");
+        HLE(ORIGINAL, "ARM7 Sound: Befehlsliste als erledigt gemeldet");
     } else {
         HLE(FEHLT, "ARM7 Sound: Befehlsliste vor Einrichtung des gemeinsamen Speichers");
     }

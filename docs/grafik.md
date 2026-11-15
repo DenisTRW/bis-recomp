@@ -366,11 +366,12 @@ Prüfsumme der Texturbytes), `BIS_TEXRAW` (Textur-Speicher roh), `BIS_SWAPLOG`,
 ### Offen: 10 s schwarzer oberer Bildschirm vor dem Haus
 
 Frame ~3300–4000 (Lauf „Neues Spiel“) ist oben ~700 Frames schwarz, bevor der Toad das Haus
-seiner Mutter betritt. Unabhängig von `BIS_CARD_DELAY`. In dieser Zeit liest das Spiel nur
-`SNDSharedWork` (`0x02060a00`: `+0` finishCommandTag, `+4` playerStatus). Mit
-`BIS_SND_STATUS=1` (Spieler gelten als „spielt“) bleibt es dauerhaft schwarz. Die Szene ist
-offenbar auf den Sound abgestimmt und endet ohne ihn erst über ein Zeitlimit → mit der
-Sound-Nachbildung angehen.
+seiner Mutter betritt. Erst für Sound gehalten; mit dem Sound-Treiber ([`sound.md`](sound.md))
+bleibt es aber gleich. Tatsächlich lädt das Spiel in dieser Zeit (Textur-Bänke A/B im
+LCDC-Modus, 0 Polygone) über den Streaming-Lader `0x0201c9ac`: alle 3 Bilder ein Block von
+512 Byte von der Karte (ROM `0x01fedc00…`) in den Ringpuffer `0x021e2ac0`. Aufgerufen wird der
+Lader von `func_ov003_0206b788` über `func_0201c2f4` – nur jedes dritte Bild. Unabhängig von
+`BIS_CARD_DELAY`. Nächster Schritt: herausfinden, was diesen 3-Bilder-Takt bestimmt.
 
 ### Gelöst: Sprechblasen (15.11.2026)
 

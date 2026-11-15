@@ -127,7 +127,7 @@ def main():
     out = root / "build" / "pc"
     out.mkdir(parents=True, exist_ok=True)
     sources = ["boot_test.c", "sched.c", "threads_hle.c", "arm7_hle.c", "card.c", "vram.c",
-               "render2d.c", "gpu3d.c", "smc.c", "png.c", "hostprof.c", "frontend_sdl.c"]
+               "render2d.c", "gpu3d.c", "smc.c", "png.c", "hostprof.c", "sound.c", "frontend_sdl.c"]
     objs = sorted((root / "build" / "recomp" / "obj").glob("*.o"))
     if not objs:
         fail("no compiled objects found in build/recomp/obj")
