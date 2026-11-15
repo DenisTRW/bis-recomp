@@ -223,13 +223,15 @@ static void emit_poly(const Vtx *vs, int n) {
         if (o.y > p->ymax) p->ymax = o.y;
     }
     p->n = m;
-    /* Culling: auf dem Bildschirm im Uhrzeigersinn = Vorderseite */
+    /* Culling: auf dem Bildschirm gegen den Uhrzeigersinn = Vorderseite (wie OpenGL, melonDS
+     * rechnet gleich). Bildschirm-y zeigt nach unten, daher ist die Flaeche dann negativ.
+     * Frueher umgekehrt; aufgefallen am Titelmenue, dessen Wolken nur Vorderseiten haben. */
     float area = 0;
     for (int i = 0; i < m; i++) {
         SVtx *u = &p->v[i], *v = &p->v[(i + 1) % m];
         area += u->x * v->y - v->x * u->y;
     }
-    int front = area > 0;
+    int front = area < 0;
     if (area != 0) {
         if (front && !((poly_attr_cur >> 7) & 1)) { dbg_cull++; return; }
         if (!front && !((poly_attr_cur >> 6) & 1)) { dbg_cull++; return; }

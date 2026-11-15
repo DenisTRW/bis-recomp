@@ -235,22 +235,21 @@ und Vorgeschichte bzw. Schreibzugriffe mit Frame, `lr`, `sp` und Vorgeschichte. 
 
 Funktionsverfolgung mit mehreren Adressen: `boot_test.exe … 0 "0201c9ac,0203dd70"`.
 
-## Offen: Hintergrund des Titelmenüs (unterer Bildschirm)
+## Gelöst: Hintergrund des Titelmenüs (unterer Bildschirm)
 
-Vergleich mit DeSmuME: Im Original zeigt der untere Bildschirm im Titelmenü einen lila Himmel
-mit Wolken und gespiegeltem Schloss, bei uns ist er weiß. Unten liegt Engine A (POWCNT1
-Bit 15 = 0) mit BG0 = 3D und BG3. Die 3D-Szene kommt an (27 Polygone, texturiert), wird aber
-nicht sichtbar: Die Polygone sind entartet, alle gezeigten Ecken haben x = 0 bzw. x = 256
-(`BIS_3D=1`, Liste 0-7), der letzte Roh-Vertex ist `0 3072 0`. Vermutung: Fehler bei den
-X-Koordinaten in einem Vertex-Befehl oder in der Matrix dieser Szene. Außerdem wirkt der
-Schriftzug „©2009 Nintendo“ rot-weiß zerfasert (Blending/Palette prüfen).
-Stand der Untersuchung: Die Menü-Polygone (Wolken-Streifen) liegen bei y ≈ −11…−13
-(Skalierung 8 × Verschiebung −1,43 aus `MTX_MULT_4x3`). Die einzige jemals geladene
-Projektion ist die Ortho-Matrix aus VBlank 591 (bildet y = 0…12 ab), damit landen sie bei
-y/w ≈ 3,2 und werden weggeclippt. Die Titelszene lädt selbst keine Projektion
-(`BIS_GXMTX=a-b` zeigt nur Matrix-Befehle). Der asynchrone GX-Weg wird hier nicht benutzt.
-Nächster Schritt: Clip-Matrix (`0x04000640`) im echten Spiel (DeSmuME) an derselben Stelle
-auslesen und vergleichen.
+Im Original zeigt der untere Bildschirm im Titelmenü einen lila Himmel mit Wolken und das
+gespiegelte Schloss im Wasser, bei uns war er weiß. Ursache war **nicht** die Matrix, sondern
+die Rückseiten-Erkennung im 3D-Renderer: Sie hielt Dreiecke, die auf dem Bildschirm im
+Uhrzeigersinn laufen, für die Vorderseite. Auf dem DS ist es wie bei OpenGL umgekehrt
+(gegen den Uhrzeigersinn = vorne, melonDS rechnet genauso). Die Wolken- und
+Spiegel-Streifen sind als „nur Vorderseite zeichnen“ markiert (POLYGON_ATTR Bit 7) und
+wurden deshalb komplett verworfen; übrig blieben nur entartete Dreiecke ohne Fläche.
+
+So gefunden: `BIS_3D=1` zählte 234 020 von 256 977 Polygonen als „Rückseite“. Seit der
+Korrektur sind es bis zum Titelmenü 0 und bis Toad Town 332. Die Projektion (Ortho aus
+VBlank 591, x 0…16, y 0…12) und die 64-Bit-Division darin sind korrekt; die früheren
+Werte oben waren falsch abgelesen. Prüfsumme des Spielablaufs unverändert
+(`759a8d3974b70234`), es ändert sich nur das Bild.
 
 Weitere abgeschnittene Funktion behoben: `func_ov012_02074a54` (Sprungtabelle bis
 `0x02076f74`, Größe 0x7a0 → 0x2520). Nicht übersetzte Befehle insgesamt: 959 → 69.
