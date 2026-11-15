@@ -43,6 +43,7 @@ void rc_msr(CPU *c, const char *field, uint32_t v);
 uint32_t rc_mrc(CPU *c, int op1, int crn, int crm, int op2);
 void rc_mcr(CPU *c, int op1, int crn, int crm, int op2, uint32_t v);
 void rc_todo(CPU *c, const char *what);         /* nicht übersetzter Befehl */
+void rc_spin(CPU *c, uint32_t loop, uint32_t n); /* Warteschleife: Runde fertig (n Lesezugriffe) */
 
 #define RC_TODO(s) rc_todo(c, s)
 

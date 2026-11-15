@@ -230,6 +230,8 @@ und Vorgeschichte bzw. Schreibzugriffe mit Frame, `lr`, `sp` und Vorgeschichte. 
 | `BIS_SNDLOG=1` / `BIS_SND_STATUS=1` | Sound-Befehle protokollieren / Experiment: Spielerstatus pflegen |
 | `BIS_CARDLOG=1` | Karten-Befehle, DMA-Steuerung, Karten-DMA |
 | `BIS_CARD_DELAY=n` | Karten-DMA nach n Speicherzugriffen (Standard 2048, 0 = sofort/alt) |
+| `BIS_NOSPIN=1` | Warteschleifen nicht abkürzen (Vergleich, siehe „60 Bilder/s“) |
+| `BIS_HOSTPROF=datei` | Rechenzeit-Profil auf dem PC (ab `BIS_PROFILE_FROM`), Auswertung `recomp/tools/hostprof.py` |
 
 Funktionsverfolgung mit mehreren Adressen: `boot_test.exe … 0 "0201c9ac,0203dd70"`.
 
@@ -295,11 +297,36 @@ Offen: ob 2 pro Frame dem Original entspricht – Referenz mit DeSmuME (`RATE`-Z
 `recomp/tools/desmume_probe.lua`).
 
 Neue Referenz-Prüfsummen: ohne Eingabe (3000) `ac1b83dc7b22181a`, Dateiauswahl
-(`1100:start,1400:a`, 3000) `698b1d268279c0e7`, Neues Spiel (3600) `a7e0ce4199bcc8d6`.
+(`1100:start,1400:a`, 3000) `698b1d268279c0e7`, Neues Spiel (3600) `759a8d3974b70234`
+(der früher notierte Wert `a7e0ce41…` war veraltet; der Lauf stoppt bei Frame 3151 am
+Standard-Budget von 2000 Mio. Zugriffen). Mit Budget 100000: Neues Spiel bis 5000
+`f9d6029a2ec7d436`.
+
+### 60 Bilder/s: Warteschleifen und Zeit-Profil
+
+Neues Werkzeug: `BIS_HOSTPROF=datei` (`recomp/runtime/hostprof.c`) misst echte Rechenzeit auf
+dem PC (Stichproben des Befehlszeigers, ab `BIS_PROFILE_FROM`), Auswertung mit
+`python -I recomp/tools/hostprof.py programm.exe datei`. Ergebnis im Feld: 53 % der Zeit in
+der Warteschleife `.L_020cec58` (siehe oben), danach Buchführung `hle_hit` (Textvergleich bei
+jedem Aufruf) und der 3D-Renderer.
+
+1. **Warteschleifen überspringen (bitgleich).** Der Recompiler erkennt reine Warteschleifen
+   (`spin_loop` in `recomp.py`: nur Lesen und Rechnen, keine Schreibzugriffe/Aufrufe, jede
+   Runde hängt nur von frisch gelesenen Werten ab; derzeit 51 Stück) und ruft am Rücksprung
+   `rc_spin` auf. Las die letzte Runde nur RAM und kam kein Ereignis dazwischen, überspringt
+   die Laufzeit ganze Runden bis kurz vor das nächste Ereignis (Bildzeile, Takt, Karte,
+   Stichprobe, Budget). Das Ereignis kommt dann beim selben Zugriff wie ohne Abkürzung:
+   alle Prüfsummen unverändert, `BIS_NOSPIN=1` schaltet es zum Vergleich ab. Im Feld werden
+   so ~90 % der Zugriffe übersprungen.
+2. **`hle_hit` mit Zeiger-Cache** statt Textvergleich über alle Einträge.
+
+Ergebnis (5000 Frames „Neues Spiel“, ohne Fenster): 83,5 s → 44,8 s → 21,3 s; das Feld läuft
+ohne Fenster mit ~175 Bildern/s, im Fenster stabil mit 60 (Taktbremse). Größter
+verbliebener Posten: der 3D-Software-Renderer (`gpu3d_vblank`, `plot`).
 ### Offen nach Spieltest (15.11.2026)
 
 Laufen und Sprechen in Toad Town funktionieren und fühlen sich mit dem Bildzeilen-Modell
-flüssig an (~30 Bilder/s im Fenster). Zwei sichtbare Fehler:
+flüssig an (damals ~30 Bilder/s im Fenster, inzwischen 60). Zwei sichtbare Fehler:
 
 1. **Keine Sprechblasen / kein Text.** Vermutung: Die Textboxen nutzen Grafikfunktionen, die
    der 2D-Renderer noch nicht kann (in der Tabelle oben als FEHLT): affine bzw. erweiterte

@@ -33,12 +33,15 @@
 #include "render2d.h"
 #include "gpu3d.h"
 #include "png.h"
+void hostprof_start(void);
+void hostprof_stop(void);
+extern volatile int hostprof_active;
 #ifdef PLATFORM_SDL
 #include "frontend.h"
 #endif
 
 /* Fehlersuche-Schalter, einmal beim Start gelesen (getenv ist zu langsam fuer heisse Pfade) */
-static int dbg_div, dbg_dmalog, dbg_cardlog;
+static int dbg_div, dbg_dmalog, dbg_cardlog, spin_off;
 /* Aufrufstatistik fuer den Bericht: im Testprogramm an, in der spielbaren Version nur mit BIS_PROFILE */
 static int profile_calls = 1;
 
@@ -61,9 +64,19 @@ static const char *const hle_cat_name[] = { "ORIGINAL ", "SIMULIERT", "FEHLT    
 static struct { HleCat cat; const char *what; uint64_t n; } hle[HLE_MAX];
 
 void hle_hit(HleCat cat, const char *what) {
+    /* Schnellweg: eine Aufrufstelle übergibt immer denselben Zeiger (kleiner Zeiger-Cache);
+     * sonst Suche per Textvergleich, weil derselbe Text an mehreren Stellen stehen kann */
+    static const char *cache_key[256];
+    static unsigned char cache_idx[256];
+    unsigned h = (unsigned)(((uintptr_t)what >> 2) & 255);
+    if (cache_key[h] == what) { hle[cache_idx[h]].n++; return; }
     for (int i = 0; i < HLE_MAX; i++) {
-        if (!hle[i].what) { hle[i].cat = cat; hle[i].what = what; hle[i].n = 1; return; }
-        if (hle[i].what == what || strcmp(hle[i].what, what) == 0) { hle[i].n++; return; }
+        if (!hle[i].what) { hle[i].cat = cat; hle[i].what = what; hle[i].n = 0; }
+        if (hle[i].what == what || strcmp(hle[i].what, what) == 0) {
+            cache_key[h] = what; cache_idx[h] = (unsigned char)i;
+            hle[i].n++;
+            return;
+        }
     }
 }
 
@@ -506,13 +519,14 @@ static int halt_to_vcount(void) {
     return 1;
 }
 
+static uint64_t ev_stamp;   /* zählt Ereignisse, die Speicher oder Interrupts ändern können (rc_spin) */
 static void prof_sample(void);   /* Stichprobe: wo verbraucht das Spiel seine Zugriffe? */
 #define BUDGET() do { \
         if (++mem_accesses > mem_budget) stop("Speicherzugriffs-Budget aufgebraucht"); \
-        if (mem_accesses >= next_line_at) line_event(); \
+        if (mem_accesses >= next_line_at) { line_event(); ev_stamp++; } \
         if ((mem_accesses & 0xffff) == 0) prof_sample(); \
-        if ((mem_accesses & TICK_MASK) == 0) tick_pending = 1; \
-        if (card_countdown && !--card_countdown) card_fire(); \
+        if ((mem_accesses & TICK_MASK) == 0) { tick_pending = 1; ev_stamp++; } \
+        if (card_countdown && !--card_countdown) { card_fire(); ev_stamp++; } \
     } while (0)
 
 /* Interrupts auch in engen Warteschleifen ohne Funktionsaufruf: Steht etwas an,
@@ -533,6 +547,7 @@ static void poll_deliver(void) {
     uint32_t w = ring_last();
     for (int i = 0; i < 16; i++)
         if (poll_where[i].addr == w || !poll_where[i].addr) { poll_where[i].addr = w; poll_where[i].n++; break; }
+    ev_stamp++;
     platform_inhibit_irq++;
     if (deliver_pending(&cpu)) {
         poll_irqs++;
@@ -576,6 +591,42 @@ static void rwatch_hit(uint32_t a, int size);
 static uint32_t rd_ring[16], rd_pos;   /* letzte Lesezugriffe außerhalb von Interrupts (Bericht) */
 #define RWATCH(a, s) do { if (!in_irq) rd_ring[rd_pos++ & 15] = (a); \
     if (rwatch_addr && ((a) & ~3u) == rwatch_addr) rwatch_hit(a, s); } while (0)
+/* Warteschleifen (vom Recompiler erkannt, siehe spin_loop in recomp.py): Die Schleife
+ * liest nur Speicher und hängt nur von den gelesenen Werten ab. Lief die letzte Runde ohne
+ * Ereignis dazwischen und las sie nur RAM, laufen alle weiteren Runden bis zum nächsten
+ * Ereignis (Bildzeile, Takt, Karte, Stichprobe, Budget) genauso ab. Diese Runden werden
+ * übersprungen: Die Zugriffe werden gezählt, aber nicht ausgeführt. Es bleiben immer
+ * weniger Zugriffe als bis zum Ereignis übrig, also kommt es beim selben Zugriff wie
+ * ohne Abkürzung - der Ablauf ist bitgleich, nur schneller. */
+static uint32_t spin_loop_at;
+static uint64_t spin_at, spin_stamp, spin_skipped;
+static int ram_addr(uint32_t a) { return (a >> 24) == 0x02 || (a >> 24) == 0x01; }
+static uint64_t until(uint64_t d, uint64_t m) { return m < d ? m : d; }
+void rc_spin(CPU *c, uint32_t loop, uint32_t n) {
+    (void)c;
+    if (spin_off) return;
+    if (loop != spin_loop_at || spin_at + n != mem_accesses || spin_stamp != ev_stamp || in_irq) {
+        spin_loop_at = loop; spin_at = mem_accesses; spin_stamp = ev_stamp;   /* erste Runde: nur merken */
+        return;
+    }
+    spin_at = mem_accesses;
+    for (uint32_t i = 1; i <= n; i++) if (!ram_addr(rd_ring[(rd_pos - i) & 15])) return;
+    if (((irq_pending_extra & io32(0x210)) || tick_pending || !arm7_recv_empty()) && sched_active &&
+        !platform_inhibit_irq && (io[0x208] & 1) && !(cpu.cpsr_ctrl & 0x80)) return;   /* POLL_IRQ käme */
+    uint64_t d = next_line_at > mem_accesses ? next_line_at - mem_accesses : 1;
+    d = until(d, 0x10000 - (mem_accesses & 0xffff));
+    d = until(d, TICK_MASK + 1 - (mem_accesses & TICK_MASK));
+    if (card_countdown) d = until(d, card_countdown);
+    if (mem_budget != UINT64_MAX) d = until(d, mem_budget >= mem_accesses ? mem_budget - mem_accesses + 1 : 1);
+    uint64_t skip = (d - 1) / n * n;
+    if (!skip) return;
+    mem_accesses += skip;
+    if (card_countdown) card_countdown -= (uint32_t)skip;
+    spin_at = mem_accesses;
+    spin_skipped += skip;
+    HLE(SIMULIERT, "Warteschleife: Runden bis zum naechsten Ereignis uebersprungen (bitgleich)");
+}
+
 uint8_t rd8(uint32_t a) {
     BUDGET(); POLL_IRQ(); RWATCH(a, 1);
     uint8_t *p = ptr(a); if (p) return *p;
@@ -935,7 +986,9 @@ static void vblank(CPU *c) {
         if (prof_from >= 0 && (long long)frames == prof_from) {
             for (unsigned i = 0; i < nfns; i++) fns[i].calls = 0;
             prof_reset();
+            hostprof_active = 1;
         }
+        if (prof_from < 0) hostprof_active = 1;
     }
     platform_inhibit_irq++;
     gpu3d_vblank();     /* 3D: Liste des vorigen Frames zeichnen, neue übernehmen */
@@ -1162,7 +1215,8 @@ static void report(void) {
     printf("Abbruch:            %s\n", stop_reason);
     printf("Frames (VBlank):    %llu\n", (unsigned long long)frames);
     printf("Funktionsaufrufe:   %llu\n", (unsigned long long)fn_entries);
-    printf("Speicherzugriffe:   %llu\n", (unsigned long long)mem_accesses);
+    printf("Speicherzugriffe:   %llu (in Warteschleifen uebersprungen: %llu)\n", (unsigned long long)mem_accesses,
+           (unsigned long long)spin_skipped);
     printf("DMA-Kopien:         %llu\n", (unsigned long long)dma_count);
     printf("Fall-throughs:      %llu\n", (unsigned long long)fallthroughs);
     printf("Ungemappt:          %u\n", unmapped_count);
@@ -1372,7 +1426,9 @@ static int take_options(int argc, char **argv) {
 
 int main(int argc, char **argv) {
     argc = take_options(argc, argv);
-    dbg_div = getenv("BIS_DIV") != NULL; dbg_dmalog = getenv("BIS_DMALOG") != NULL; dbg_cardlog = getenv("BIS_CARDLOG") != NULL;
+    dbg_div = getenv("BIS_DIV") != NULL;
+    dbg_dmalog = getenv("BIS_DMALOG") != NULL; dbg_cardlog = getenv("BIS_CARDLOG") != NULL;
+    spin_off = getenv("BIS_NOSPIN") != NULL;   /* Fehlersuche: Warteschleifen nicht abkuerzen */
 #ifdef PLATFORM_SDL
     profile_calls = getenv("BIS_PROFILE") != NULL;
 #else
@@ -1456,7 +1512,9 @@ int main(int argc, char **argv) {
     /* Der Start-Thread läuft als erster Fiber; er bindet sich beim ersten
      * OS_SaveContext an seine SDK-Thread-Struktur. */
     snprintf(frames_dir, sizeof frames_dir, "%s/../../build/frames", dir);
+    hostprof_start();   /* Fehlersuche: BIS_HOSTPROF=datei (Rechenzeit auf dem PC) */
     sched_run(&cpu, BOOT_THREAD_KEY, boot_entry, NULL);
+    hostprof_stop();
     arm7_flush_save();   /* Spielstand sichern (nur mit --save) */
 #ifndef PLATFORM_SDL
     dump_frame("ende");

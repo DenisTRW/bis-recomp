@@ -215,6 +215,7 @@ def read_functions(asm_dir):
 
 FUNC_AT = {}   # (Modul, Adresse) -> Funktionsname, für rohe Sprungziele
 SHARED_ADDR = {}   # Adresse -> Module, die dort eine Funktion haben (Overlays teilen sich Adressen)
+SPIN_LOOPS = []   # (Funktion, Schleifenanfang, Lesezugriffe pro Runde), siehe spin_loop
 EXTRA_ENTRY = {}   # (Modul, Adresse) -> Funktion, in deren Mitte von außen gesprungen wird
 
 
@@ -702,6 +703,87 @@ class Translator:
         out.append("}")
         return " ".join(out)
 
+    # --- Warteschleifen
+    FLAG_READS = {"eq": "Z", "ne": "Z", "cs": "C", "hs": "C", "cc": "C", "lo": "C", "mi": "N", "pl": "N",
+                  "vs": "V", "vc": "V", "hi": "CZ", "ls": "CZ", "ge": "NV", "lt": "NV", "gt": "NZV",
+                  "le": "NZV", "al": ""}
+    REG_TOKEN = re.compile(r"\b(r1[0-5]|r\d|sb|sl|fp|ip|sp|lr|pc)\b")
+
+    def spin_loop(self, i):
+        """Ist f.insns[i] der Rücksprung einer reinen Warteschleife? Dann (Schleifenanfang,
+        Lesezugriffe pro Runde), sonst None.
+
+        Eine Warteschleife liest nur Speicher und rechnet mit den gelesenen Werten (keine
+        Schreibzugriffe, keine Aufrufe, keine Sprünge außer nach draußen) und jede Runde
+        hängt nur von Werten ab, die in derselben Runde neu gelesen oder berechnet werden
+        oder sich in der Schleife nie ändern. Solange sich der Speicher nicht ändert, läuft
+        jede Runde gleich ab - die Laufzeit (rc_spin) darf dann Runden überspringen."""
+        insns = self.f.insns
+        back = insns[i]
+        base, d = parse_mnemonic(back.mn)
+        if base != "b":
+            return None
+        start = self.label_addr(split_ops(back.ops)[0])
+        if start is None or not (self.f.addr <= start <= back.addr):
+            return None
+        body = [x for x in insns if start <= x.addr <= back.addr]
+        if not body or body[0].addr != start or len(body) > 24:
+            return None
+        written = set()
+        steps = []   # (liest, schreibt sicher, schreibt vielleicht)
+        loads = 0
+        for x in body:
+            b, dd = parse_mnemonic(x.mn)
+            cond = dd.get("cond", "al")
+            ops = split_ops(x.ops)
+            reads = set(self.FLAG_READS[cond])
+            wr = set()
+            if x is back:
+                pass
+            elif b == "b":
+                t = self.label_addr(ops[0])
+                if t is None or start <= t <= back.addr or cond == "al":
+                    return None   # nur bedingte Ausgänge nach draußen
+            elif b == "ldr" and dd.get("sz", "") in ("", "b", "h", "sb", "sh") and len(ops) == 2:
+                if REGS.get(ops[0].strip()) in (None, 15) or cond != "al":
+                    return None
+                if ops[1].startswith("["):
+                    m = re.fullmatch(r"\[([^\]]*)\]", ops[1].strip())
+                    if not m or REGS.get(split_ops(m.group(1))[0].strip()) == 15:
+                        return None   # Writeback, Post-Index oder pc-relativ
+                    reads |= set(self.REG_TOKEN.findall(m.group(1)))
+                    loads += 1
+                wr.add(ops[0].strip())
+            elif b in DP_MOVE or b in DP_LOGIC or b in ("add", "sub", "rsb") or b in DP_TEST:
+                S = "s" in dd or b in DP_TEST
+                src = ops if b in DP_TEST else ops[1:]
+                text = ",".join(src)
+                if "rrx" in text or re.search(r"(lsl|lsr|asr|ror)\s+(r\d|ip|sp|lr)", text):
+                    return None   # Carry-Eingang
+                reads |= set(self.REG_TOKEN.findall(text))
+                if b not in DP_TEST:
+                    if REGS.get(ops[0].strip()) in (None, 15):
+                        return None
+                    wr.add(ops[0].strip())
+                if S:
+                    wr |= {"N", "Z", "C", "V"} if b in ("add", "sub", "rsb", "cmp", "cmn") else {"N", "Z"}
+                    if b not in ("add", "sub", "rsb", "cmp", "cmn"):
+                        written.add("C")   # Logik-Befehle setzen C nur manchmal
+            else:
+                return None
+            reads = {REGS.get(r, r) for r in reads} - {15}
+            wr = {REGS.get(r, r) for r in wr}
+            written |= wr
+            steps.append((reads, wr if cond == "al" else set()))
+        if not 1 <= loads <= 8:
+            return None
+        defined = set()
+        for reads, sure in steps:
+            if any(r in written and r not in defined for r in reads):
+                return None   # Wert aus der vorigen Runde
+            defined |= sure
+        return start, loads
+
     # --- Ganze Funktion
     def run(self):
         f = self.f
@@ -715,9 +797,16 @@ class Translator:
                 self.todo["Thumb-Funktion"] += 1
                 body.append("RC_TODO(\"Thumb-Funktion\");")
         else:
-            for insn in f.insns:
+            for k, insn in enumerate(f.insns):
                 try:
                     code = self.translate(insn)
+                    spin = self.spin_loop(k) if insn.mn.startswith("b") else None
+                    if spin:
+                        start, loads = spin
+                        code = [s.replace(f"goto I_{start:08x};",
+                                          f"rc_spin(c, 0x{start:08x}u, {loads}); goto I_{start:08x};", 1)
+                                for s in code]
+                        SPIN_LOOPS.append((f.name, start, loads))
                     body.append((insn, code))
                 except (Unsupported, KeyError, ValueError, IndexError) as e:
                     msg = str(e) if isinstance(e, Unsupported) else f"{type(e).__name__}"
@@ -857,6 +946,7 @@ def main():
           f"({100 * stats['funcs_ok'] / max(1, stats['funcs']):.1f} %)")
     print(f"Befehle: {stats['insns']}, übersetzt: {ok} ({100 * ok / max(1, stats['insns']):.2f} %)")
     print(f"HLE-Ersatz: {stats['hle']} Funktionen")
+    print(f"Warteschleifen (rc_spin): {len(SPIN_LOOPS)}")
     print("Häufigste TODOs:")
     for k, v in todo_total.most_common(20):
         print(f"  {v:7}  {k}")

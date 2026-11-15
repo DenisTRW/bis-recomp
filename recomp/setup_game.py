@@ -127,13 +127,13 @@ def main():
     out = root / "build" / "pc"
     out.mkdir(parents=True, exist_ok=True)
     sources = ["boot_test.c", "sched.c", "threads_hle.c", "arm7_hle.c", "card.c", "vram.c",
-               "render2d.c", "gpu3d.c", "smc.c", "png.c", "frontend_sdl.c"]
+               "render2d.c", "gpu3d.c", "smc.c", "png.c", "hostprof.c", "frontend_sdl.c"]
     objs = sorted((root / "build" / "recomp" / "obj").glob("*.o"))
     if not objs:
         fail("no compiled objects found in build/recomp/obj")
     run([gcc, "-O2", "-w", "-DRC_TRACE", "-DPLATFORM_SDL",
          "-I", root / "recomp" / "include", "-I", root / "build" / "recomp", "-I", rt, "-I", sdl / "include",
-         "-o", out / "bis_pc.exe", *[rt / s for s in sources], *objs, "-L", sdl / "lib", "-lSDL3"], root, env)
+         "-o", out / "bis_pc.exe", *[rt / s for s in sources], *objs, "-L", sdl / "lib", "-lSDL3", "-lwinmm"], root, env)
     shutil.copy2(sdl / "bin" / "SDL3.dll", out / "SDL3.dll")
     if (root / "recomplauncher.json").exists():
         shutil.copy2(root / "recomplauncher.json", out / "recomplauncher.json")

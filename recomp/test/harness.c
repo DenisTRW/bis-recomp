@@ -62,6 +62,7 @@ void rc_jump_indirect(CPU *c, uint32_t addr) {
     if (dispatch(c, addr)) return;
     fprintf(stderr, "[harness] jump_indirect 0x%08x\n", addr); harness_todo_count++;
 }
+void rc_spin(CPU *c, uint32_t loop, uint32_t n) { (void)c; (void)loop; (void)n; }
 void rc_fallthrough(CPU *c, uint32_t addr) { (void)c; fprintf(stderr, "[harness] fallthrough 0x%08x\n", addr); harness_todo_count++; }
 void rc_swi(CPU *c, uint32_t n) { (void)c; fprintf(stderr, "[harness] swi 0x%x\n", n); harness_todo_count++; }
 uint32_t rc_mrs(CPU *c, int spsr) { (void)spsr; return c->cpsr_ctrl; }
