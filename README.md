@@ -18,23 +18,70 @@ card, the ARM7 co-processor, …).
 > file select screen (fully rendered, including 3D), and reacts to keyboard input. Starting a new
 > game plays the opening scene in Toad Town. There is no sound yet.
 
-> [!NOTE]
-> **Not playable yet – there are no downloads or builds.** This repository only contains the source
-> code of the recompiler, runtime and launcher. It contains no game data and no game code; running it
-> requires your own copy of the game and building everything yourself.
+## Progress
 
+<!-- progress:start (written by scripts/progress.py) -->
+<p align="center">
+  <img src="docs/progress/recompiled.svg" alt="Game code recompiled"><br>
+  <img src="docs/progress/functions.svg" alt="Functions fully recompiled"><br>
+  <img src="docs/progress/playable.svg" alt="Playable">
+</p>
+
+**Recompiled** = how much of the game's machine code the recompiler already translates to C.
+**Playable** = how far the game runs on PC (milestones below).
+
+| | Milestone |
+|---|---|
+| ✅ | Boot, logos and intro |
+| ✅ | Title screen |
+| ✅ | File select |
+| ✅ | New game: opening scene |
+| ⬜ | Walking and talking in the field |
+| ⬜ | Battles |
+| ⬜ | Sound and music |
+| ⬜ | Touch screen and controller |
+| ⬜ | Saving and loading in game |
+| ⬜ | Full playthrough |
+<!-- progress:end -->
+
+> [!NOTE]
+> **Early test release – not a finished game.** Releases contain only the tools (recompiler,
+> runtime, launcher). There is no game data and no game code in this repository or in any release:
+> the game is built on your PC from **your own ROM** during setup (about 2–3 minutes).
+
+## Which ROM you need
+
+Only this exact version works. The launcher and the setup check it and refuse anything else.
+
+| | |
+|---|---|
+| Game | Mario & Luigi: Bowser's Inside Story (Nintendo DS) |
+| Region | **Europe** (languages: English, French, German, Spanish, Italian) |
+| Game code | `CLJP` (internal title `MARIO&LUIGI3`) |
+| Revision | **0** |
+| File size | **134,217,728 bytes** (128 MiB, untrimmed) |
+| CRC32 | `9C2F90A6` |
+| MD5 | `3C2334E0DEA72313D36B51A5418501F9` |
+| SHA-1 | `5F35BFBF79A0947740795DD770D99E8EEA3AC85E` |
+
+Not supported: the US version (`CLJE`), the Japanese version, other revisions and **trimmed**
+ROMs (smaller files). Make the ROM from your own game card. To check your file on Windows:
+
+```
+certutil -hashfile "path\to\your.nds" SHA1
+```
 **This repository contains no game data.** You need your own copy of the game.
 
-### Why there are no downloads
+### Why there is no game to download
 
 The recompiler translates the game's own machine code from **your** ROM into C, and that is
 compiled into the PC program (`bis_pc.exe`). So the finished program contains the translated
 game code – it is made from the game, not just from this project. This repository only
 contains the translator (recompiler, runtime, launcher), never the result.
 
-That is why everyone needs their own ROM, and why there will be no ready-made game to download.
-If releases come later, they will contain only the tools; the game is then built on your PC
-from your own ROM during setup.
+That is why everyone needs their own ROM, and why there will never be a ready-made game to
+download. Releases contain only the tools; the game is built on your PC from your own ROM during
+setup.
 
 ## Features so far
 
@@ -49,15 +96,6 @@ from your own ROM during setup.
 - Unit tests for tricky recompiler cases (computed jumps, multi-entry functions, 64-bit division)
 - **Launcher**: checks your ROM, shows your cover and screenshots, game and port info, has a settings
   page with options for the game, and starts it
-
-## Supported version
-
-| Field | Value |
-|---|---|
-| Region | Europe (En, Fr, De, Es, It) |
-| Game code | `CLJP` |
-| Revision | 0 |
-| SHA-1 | `5F35BFBF79A0947740795DD770D99E8EEA3AC85E` |
 
 ## Launcher
 

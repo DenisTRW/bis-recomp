@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="28" role="img" aria-label="Game code recompiled: 100.0%">
+  <title>Game code recompiled: 100.0% (806,306 / 806,375 instructions)</title>
+  <rect width="560" height="28" rx="6" fill="#24292f"/>
+  <rect x="230" width="330" height="28" rx="6" fill="#3d444d"/>
+  <rect x="230" width="330.0" height="28" rx="6" fill="#2da44e"/>
+  <text x="12" y="18.5" font-family="Segoe UI,Helvetica,Arial,sans-serif" font-size="13" font-weight="600" fill="#ffffff">Game code recompiled</text>
+  <text x="240" y="18.5" font-family="Segoe UI,Helvetica,Arial,sans-serif" font-size="13" font-weight="600" fill="#ffffff">100.0%  <tspan font-weight="400" fill="#e6e6e6">806,306 / 806,375 instructions</tspan></text>
+</svg>

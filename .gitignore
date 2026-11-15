@@ -1,6 +1,7 @@
 # Original ROM and everything extracted from it - NEVER commit
 orig/*
 !orig/.gitkeep
+!orig/README.md
 *.nds
 *.srl
 extract/
@@ -18,6 +19,7 @@ build/
 # Local tools (compiler, dsd, objdiff, ...)
 tools/*
 !tools/.gitkeep
+!tools/README.md
 
 # Python / Editor
 __pycache__/
