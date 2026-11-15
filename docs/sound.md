@@ -57,3 +57,16 @@ gehen über `platform_mem` an der Zeitmessung des ARM9 vorbei – der ARM7 läuf
 
 Behobener Fehler beim Aufbau: Der ADPCM-Dekoder dekodierte bei tiefer gespielten Noten
 (dasselbe Sample mehrfach) jedes Mal von vorn – der Mixer war dadurch 8× zu langsam.
+
+## Offen (Spieltest 15.11.2026, später angehen)
+
+1. **Keine Musik nach dem Star Sprite.** Effekte (springende Toads) sind zu hören, Musik
+   nicht; laut Spieler kommt sie später wieder. Befund (`BIS_SNDSTAT=500`, Lauf „Neues Spiel“
+   mit A alle 120 Bilder): bis Bild ~11500 laufen die Musik-Sequenzen `0233cd1c` (Player 6)
+   und `0236891c` (Player 7), ab ~12000 nur noch Effekt-Sequenzen aus `0239eddc`; bis Bild
+   21000 startet kein neues Musikstück. Zu klären: gewollte Stille (Vergleich DeSmuME) oder
+   Musik als Stream/anderer Weg, den der Ersatz nicht bedient.
+2. **Knattern, sobald Mario und Luigi da sind** (Schloss, ab ~Bild 19500). Vermutlich rechnet
+   das Spiel dort nicht mehr in Echtzeit und der Ton-Puffer läuft leer – Bildrate im
+   Fenstertitel prüfen, sonst Klangerzeugung (WAV mit `BIS_WAV`) auf Sprünge untersuchen.
+

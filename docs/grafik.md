@@ -363,6 +363,13 @@ Neue Hilfen: `BIS_3DRECT` / `BIS_RENDERLOG` (Polygone eines Bildbereichs, beim Z
 Prüfsumme der Texturbytes), `BIS_TEXRAW` (Textur-Speicher roh), `BIS_SWAPLOG`,
 `BIS_DUMP_FROM`, `BIS_NOGQ` (FIFO-Anhalten abschalten), `BIS_RWATCH=adresse:länge`.
 
+### Offen: Mario und Luigi verzerrt im Schloss (Spieltest 15.11.2026)
+
+Betreten Mario und Luigi das Schloss (nach dem Eingang mit dem Brunnen), sind ihre Figuren
+wieder verzerrt/glitchig – ähnlich wie vorher die sprechenden Toads. Später untersuchen,
+z. B. mit `BIS_DUMP_FROM`/`BIS_DUMP_EVERY=1` und `BIS_RENDERLOG` an der Stelle (Textur
+oder Position falsch? Zeitpunkt des Hochladens?).
+
 ### Offen: 10 s schwarzer oberer Bildschirm vor dem Haus
 
 Frame ~3300–4000 (Lauf „Neues Spiel“) ist oben ~700 Frames schwarz, bevor der Toad das Haus
