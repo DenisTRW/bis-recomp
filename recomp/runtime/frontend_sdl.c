@@ -84,7 +84,7 @@ void frontend_present(const uint32_t *top, const uint32_t *bottom) {
     {
         static int16_t buf[4096 * 2];
         int n = sound_take_samples(buf, 4096);
-        if (audio && n && SDL_GetAudioStreamQueued(audio) < 32728 * 4 / 6)
+        if (audio && n && SDL_GetAudioStreamQueued(audio) < 32728 * 4 / 3)   /* Notbremse: > 330 ms */
             SDL_PutAudioStreamData(audio, buf, n * 4);
     }
 
@@ -148,7 +148,19 @@ void frontend_wait_close(const char *reason) {
     SDL_Quit();
 }
 
+/* Mit Ton gibt die Soundkarte den Takt vor: weiterrechnen, sobald weniger als ~5 Bilder Ton
+ * (≈ 80 ms) warten. Das Polster überbrückt Schwankungen der Rechenzeit; vorher kam pro Bild
+ * genau ein Bild Ton ohne Puffer an, jede kleine Verzögerung riss eine Lücke (Knacken). */
+#define AUDIO_TARGET_BYTES (32728 * 4 * 5 / 60)
+
 void frontend_pace(void) {
+    if (audio) {
+        uint64_t t0 = SDL_GetTicksNS();
+        while (SDL_GetAudioStreamQueued(audio) > AUDIO_TARGET_BYTES && SDL_GetTicksNS() - t0 < 100000000ull)
+            SDL_DelayNS(500000);
+        next_frame_ns = SDL_GetTicksNS();
+        return;
+    }
     next_frame_ns += FRAME_NS;
     uint64_t now = SDL_GetTicksNS();
     if (next_frame_ns > now) SDL_DelayNS(next_frame_ns - now);
