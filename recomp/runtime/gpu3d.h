@@ -19,7 +19,7 @@ void gpu3d_write(uint32_t off, uint32_t v);   /* 32-Bit-Schreibzugriff auf 0x400
 void gpu3d_regs(void);                        /* GXSTAT, RAM_COUNT, Testergebnisse nach io[] */
 void gpu3d_ack_error(void);                   /* GXSTAT Bit 15 geschrieben: Stapelfehler löschen */
 unsigned gpu3d_fifo_level(void);              /* Einträge im GX-FIFO (nach SWAP_BUFFERS bis zum VBlank) */
-void gpu3d_vblank(void);                      /* VBlank: Liste zeichnen / übernehmen */
+void gpu3d_vblank(void);                      /* VBlank: neue Liste übernehmen und zeichnen */
 const Px3D *gpu3d_frame(void);                /* 256x192 */
 
 /* Was benutzt, aber nicht (vollständig) nachgebildet wurde (für den HLE-Bericht) */

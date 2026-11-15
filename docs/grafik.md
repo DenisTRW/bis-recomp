@@ -234,6 +234,13 @@ und Vorgeschichte bzw. Schreibzugriffe mit Frame, `lr`, `sp` und Vorgeschichte. 
 | `BIS_HOSTPROF=datei` | Rechenzeit-Profil auf dem PC (ab `BIS_PROFILE_FROM`), Auswertung `recomp/tools/hostprof.py` |
 | `BIS_LAYERPNG=1` | zu jedem Bild jede Ebene einzeln (`frame_<n>_L0..L4.png`: BG0-3, Sprites) plus DISPCNT/BGCNT/BLDCNT |
 | `BIS_MISSLOG=1` | pro ausgegebenem Bild melden, welche Renderer-Funktionen fehlten |
+| `BIS_DUMP_FROM=n` | Bilder erst ab Frame n ausgeben (mit `BIS_DUMP_EVERY=1` für Einzelbild-Analysen) |
+| `BIS_3DRECT=x0,y0,x1,y1` | mit `BIS_3D=1`: Polygone in diesem Bildbereich mit Texturkoordinaten |
+| `BIS_RENDERLOG=x0,y0,x1,y1` | beim Zeichnen: Polygone im Bereich mit Prüfsumme ihrer Texturbytes |
+| `BIS_TEXRAW=datei` | mit `BIS_3D=1`: Textur-Slots und Paletten am Ende roh speichern |
+| `BIS_SWAPLOG=1` | jedes SWAP_BUFFERS mit VBlank und Bildzeile |
+| `BIS_NOGQ=1` | GX-FIFO nach SWAP_BUFFERS nicht anhalten (alter Weg, nur Vergleich) |
+| `BIS_RWATCH=adresse:länge` | Lesezugriffe auf einen Bereich melden |
 
 Funktionsverfolgung mit mehreren Adressen: `boot_test.exe … 0 "0201c9ac,0203dd70"`.
 
@@ -331,12 +338,39 @@ flüssig an (damals ~30 Bilder/s im Fenster, inzwischen 60). Zwei sichtbare Fehl
 
 1. ~~**Keine Sprechblasen / kein Text.**~~ Gelöst, siehe nächster Abschnitt. Die Vermutung
    (affine Sprites/BGs) war falsch.
-2. **Figuren-Animationen verzerrt/glitchig.** Vermutlich mit dem GX-FIFO-Fix (nächster
-   Abschnitt) erledigt: Vorher landeten bis zu vier Szenen mit verschiedenen
-   Animationsphasen in derselben 3D-Liste, und die Eröffnung lief etwa dreimal zu schnell.
-   Im Lauf bis Frame 22000 (Schloss, Mario und Luigi laufen und springen) sind die Figuren
-   sauber, und `BIS_MISSLOG` meldet kein affines Sprite. Noch durch einen Spieltest zu
-   bestätigen. `BIS_INPUT` nimmt jetzt bis zu 1024 Tasten an (vorher 64).
+2. ~~**Figuren-Animationen verzerrt/glitchig.**~~ Gelöst, siehe „Flackernde sprechende
+   Figuren“ unten. `BIS_INPUT` nimmt jetzt bis zu 1024 Tasten an (vorher 64).
+
+### Gelöst: Flackernde sprechende Figuren im Schloss (15.11.2026)
+
+Spieltest: Im Schloss zerfiel die gerade sprechende Figur alle paar Bilder für ein Bild
+(Körper über dem Kopf, Kopf nach unten verschoben); im Haus davor nicht. Vergleich mit
+DeSmuME an derselben Stelle: Standbilder gleich, das Flackern fehlt dort.
+
+Ursache: Zeitpunkt des 3D-Zeichnens. Figuren bestehen aus 16×16-Texturteilen; beim Sprechen
+wechselt die Animationsphase, und das Spiel ordnet dabei Kopf und Körper im Textur-Speicher
+neu an (z. B. Kopf `0x1e0` → `0x1c0`, Körper `0x1b8` → `0x1e0`). Ablauf im Spiel
+(`BIS_SWAPLOG`, Watchpoint mit Bildzeile): Liste L(N) wird im VBlank N in Zeile ~196
+eingereicht, die Texturen dafür in Zeile ~197 hochgeladen; im VBlank N+1 wird L(N)
+übernommen, kurz danach kommen schon die Texturen für L(N+1). Wir zeichneten früher *vor*
+dem Wechsel (also eine Liste zu alt) – alte Geometrie mit neuen Texturen ergab den Zerfall.
+Ein Versuch, wie die Hardware ab Zeile 215 zu zeichnen, half nicht: Leerlauf springt bei uns
+direkt zum VBlank, die Zeile wird dann nie erreicht. Jetzt wird direkt nach dem Wechsel im
+VBlank gezeichnet (`gpu3d_vblank`): Liste und Texturen passen zusammen, und das Bild ist
+nebenbei ein Frame aktueller. Spielablauf und Prüfsummen unverändert.
+
+Neue Hilfen: `BIS_3DRECT` / `BIS_RENDERLOG` (Polygone eines Bildbereichs, beim Zeichnen mit
+Prüfsumme der Texturbytes), `BIS_TEXRAW` (Textur-Speicher roh), `BIS_SWAPLOG`,
+`BIS_DUMP_FROM`, `BIS_NOGQ` (FIFO-Anhalten abschalten), `BIS_RWATCH=adresse:länge`.
+
+### Offen: 10 s schwarzer oberer Bildschirm vor dem Haus
+
+Frame ~3300–4000 (Lauf „Neues Spiel“) ist oben ~700 Frames schwarz, bevor der Toad das Haus
+seiner Mutter betritt. Unabhängig von `BIS_CARD_DELAY`. In dieser Zeit liest das Spiel nur
+`SNDSharedWork` (`0x02060a00`: `+0` finishCommandTag, `+4` playerStatus). Mit
+`BIS_SND_STATUS=1` (Spieler gelten als „spielt“) bleibt es dauerhaft schwarz. Die Szene ist
+offenbar auf den Sound abgestimmt und endet ohne ihn erst über ein Zeitlimit → mit der
+Sound-Nachbildung angehen.
 
 ### Gelöst: Sprechblasen (15.11.2026)
 

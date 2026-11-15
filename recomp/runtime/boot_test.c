@@ -161,7 +161,7 @@ static inline void set_io32(uint32_t off, uint32_t v) { set_io16(off, (uint16_t)
 static uint16_t vcount;
 /* Bildzeilen-Zeitmodell (siehe line_event) */
 #define LINE_LEN ((TICK_MASK + 1) / 263)
-static int cur_line = 192;
+int cur_line = 192;   /* auch für gpu3d.c (Fehlersuche: BIS_SWAPLOG, BIS_RENDERLOG) */
 static uint64_t next_line_at = LINE_LEN;
 static uint16_t timer_cnt[4];
 
@@ -580,18 +580,18 @@ static void watch(uint32_t a, uint32_t v, int size) {
     static long long from = -1;
     if (from < 0) from = getenv("BIS_WATCH_FROM") ? atoll(getenv("BIS_WATCH_FROM")) : 0;   /* ab Frame */
     if (a + (uint32_t)size <= watch_lo || a >= watch_hi || (long long)watch_frames() < from || shown++ >= 4000) return;
-    fprintf(stderr, "  [watch] wr%d %08x = %08x  in %s  (Frame %llu, lr=%08x sp=%08x)  davor:", size * 8, a, v,
-            fn_name(ring_last()), (unsigned long long)watch_frames(), cpu.r[14], cpu.r[13]);
+    fprintf(stderr, "  [watch] wr%d %08x = %08x  in %s  (Frame %llu Zeile %d, lr=%08x sp=%08x)  davor:", size * 8, a, v,
+            fn_name(ring_last()), (unsigned long long)watch_frames(), cur_line, cpu.r[14], cpu.r[13]);
     for (int i = 5; i >= 2; i--) fprintf(stderr, " %s", fn_name(ring[(ring_pos - i) & 63]));
     fprintf(stderr, "\n");
 }
 #define WATCH(a, v, s) do { if (watch_hi) watch(a, v, s); } while (0)
 
-static uint32_t rwatch_addr;   /* Fehlersuche: BIS_RWATCH=adresse (Lesezugriffe auf dieses Wort) */
+static uint32_t rwatch_addr, rwatch_len = 4;   /* Fehlersuche: BIS_RWATCH=adresse[:laenge] (Lesezugriffe) */
 static void rwatch_hit(uint32_t a, int size);
 static uint32_t rd_ring[16], rd_pos;   /* letzte Lesezugriffe außerhalb von Interrupts (Bericht) */
 #define RWATCH(a, s) do { if (!in_irq) rd_ring[rd_pos++ & 15] = (a); \
-    if (rwatch_addr && ((a) & ~3u) == rwatch_addr) rwatch_hit(a, s); } while (0)
+    if (rwatch_addr && (uint32_t)((a) - rwatch_addr) < rwatch_len) rwatch_hit(a, s); } while (0)
 /* Warteschleifen (vom Recompiler erkannt, siehe spin_loop in recomp.py): Die Schleife
  * liest nur Speicher und hängt nur von den gelesenen Werten ab. Lief die letzte Runde ohne
  * Ereignis dazwischen und las sie nur RAM, laufen alle weiteren Runden bis zum nächsten
@@ -647,7 +647,7 @@ static void rwatch_hit(uint32_t a, int size) {
     static long long from = -1;
     if (from < 0) from = getenv("BIS_WATCH_FROM") ? atoll(getenv("BIS_WATCH_FROM")) : 0;   /* ab Frame */
     if ((long long)watch_frames() < from) return;
-    if (shown++ < 40) fprintf(stderr, "  [rwatch] rd%d %08x in %s (Frame %llu, lr=%08x)\n", size * 8, a,
+    if (shown++ < 400) fprintf(stderr, "  [rwatch] rd%d %08x in %s (Frame %llu, lr=%08x)\n", size * 8, a,
                               fn_name(ring_last()), (unsigned long long)watch_frames(), cpu.r[14]);
 }
 uint32_t rd32(uint32_t a) {
@@ -881,7 +881,7 @@ static int deliver_pending(CPU *c) {
 
 /* ---- Bild ausgeben: beide Engines als PNG (oben/unten nach POWCNT1 Bit 15) */
 static char frames_dir[1024];
-static uint64_t dump_every = 100;
+static uint64_t dump_every = 100, dump_from;   /* BIS_DUMP_FROM: erst ab diesem Frame */
 
 static void dump_frame(const char *tag) {
     static uint32_t top[256 * 192], bottom[256 * 192], both[256 * 384];
@@ -967,7 +967,11 @@ static struct { uint64_t frame; uint16_t keybit; int xy; } script[1024];
 static int script_n;
 
 static void script_load(void) {
-    if (getenv("BIS_RWATCH")) rwatch_addr = (uint32_t)strtoul(getenv("BIS_RWATCH"), NULL, 16) & ~3u;
+    if (getenv("BIS_RWATCH")) {
+        char *colon;
+        rwatch_addr = (uint32_t)strtoul(getenv("BIS_RWATCH"), &colon, 16) & ~3u;
+        if (*colon == ':') rwatch_len = (uint32_t)strtoul(colon + 1, NULL, 16);
+    }
     if (getenv("BIS_LAYERS")) render2d_layer_mask = (unsigned)strtoul(getenv("BIS_LAYERS"), NULL, 16);
     const char *s = getenv("BIS_INPUT");
     static const struct { const char *name; uint16_t bit; int xy; } names[] = {
@@ -1012,7 +1016,7 @@ static void vblank(CPU *c) {
         if (prof_from < 0) hostprof_active = 1;
     }
     platform_inhibit_irq++;
-    gpu3d_vblank();     /* 3D: Liste des vorigen Frames zeichnen, neue übernehmen */
+    gpu3d_vblank();     /* 3D: neue Liste übernehmen und sofort zeichnen */
     gx_fifo_irq();      /* FIFO wurde geleert: ggf. Interrupt */
     dma_vblank();
     platform_inhibit_irq--;
@@ -1047,7 +1051,7 @@ static void vblank(CPU *c) {
         vc[0] = (uint8_t)n; vc[1] = (uint8_t)(n >> 8); vc[2] = (uint8_t)(n >> 16); vc[3] = (uint8_t)(n >> 24);
         HLE(ORIGINAL, "ARM7: VBlank-Zaehler im Systembereich (0x027FFC3C)");
     }
-    if (dump_every && frames % dump_every == 0) {
+    if (dump_every && frames % dump_every == 0 && frames >= dump_from) {
         char tag[32];
         snprintf(tag, sizeof tag, "%05llu", (unsigned long long)frames);
         platform_inhibit_irq++;
@@ -1475,6 +1479,7 @@ int main(int argc, char **argv) {
     }
     if (getenv("BIS_CARD_DELAY")) card_delay = (uint32_t)strtoul(getenv("BIS_CARD_DELAY"), NULL, 0);
     if (getenv("BIS_DUMP_EVERY")) dump_every = strtoull(getenv("BIS_DUMP_EVERY"), NULL, 0);   /* Bild alle N Frames */
+    if (getenv("BIS_DUMP_FROM")) dump_from = strtoull(getenv("BIS_DUMP_FROM"), NULL, 0);
 #ifdef PLATFORM_SDL
     /* Fenster-Modus: ohne Frame-Limit und Budget, keine PNG-Ausgabe */
     if (argc <= 2) frame_limit = 0;

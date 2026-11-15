@@ -370,7 +370,9 @@ static unsigned gq_head, gq_tail, gq_level, gq_draining;   /* gq_level: FIFO-Ein
 static void run_cmd(uint8_t cmd, const uint32_t *p);
 
 static void exec_cmd(uint8_t cmd, const uint32_t *p) {
-    if (!gq_draining && (swap_pending || gq_head != gq_tail)) {
+    static int gq_off = -1;   /* Fehlersuche: BIS_NOGQ=1 = alter Weg ohne Anhalten nach SWAP_BUFFERS */
+    if (gq_off < 0) gq_off = getenv("BIS_NOGQ") != NULL;
+    if (!gq_off && !gq_draining && (swap_pending || gq_head != gq_tail)) {
         int np = nparams[cmd] > 0 ? nparams[cmd] : 0;
         if (gq_tail + 1u + (unsigned)np > GQ_WORDS) { flags |= G3D_MISS_OVERFLOW; return; }
         gq[gq_tail++] = cmd | (uint32_t)np << 8;
@@ -502,6 +504,11 @@ static void run_cmd(uint8_t cmd, const uint32_t *p) {
         list_sort[cur_list] = p[0] & 1;
         list_wbuf[cur_list] = (p[0] >> 1) & 1;
         swap_pending = 1;
+        if (getenv("BIS_SWAPLOG")) {
+            extern int cur_line;
+            fprintf(stderr, "  [swap] SWAP_BUFFERS ausgefuehrt (VBlank %u Zeile %d, %u Polygone, aus Warteschlange %d)\n",
+                    gx_vblanks, cur_line, npolys[cur_list], gq_draining);
+        }
         break;
     case 0x60: viewport = p[0]; break;
     case 0x70: box_result = 1; flags |= G3D_SIM_BOXTEST; break;
@@ -808,6 +815,21 @@ static void render_list(int L) {
     if (disp3d & (1u << 5)) flags |= G3D_MISS_AA;
     if (disp3d & (1u << 14)) flags |= G3D_MISS_REARBMP;
     vram_tex_slots(tex_slot, pal_slot);
+    {   /* Fehlersuche: BIS_RENDERLOG="x0,y0,x1,y1" - beim Zeichnen Polygone im Bereich mit Prüfsumme ihrer Texturbytes */
+        static int on = -1; static float rx0, ry0, rx1, ry1;
+        if (on < 0) on = getenv("BIS_RENDERLOG") && sscanf(getenv("BIS_RENDERLOG"), "%f,%f,%f,%f", &rx0, &ry0, &rx1, &ry1) == 4;
+        extern int cur_line;
+        for (unsigned i = 0; on && i < npolys[L]; i++) {
+            const Poly *p = &polys[L][i];
+            float x0 = 1e9f, x1 = -1e9f;
+            for (int k = 0; k < p->n; k++) { if (p->v[k].x < x0) x0 = p->v[k].x; if (p->v[k].x > x1) x1 = p->v[k].x; }
+            if (x1 < rx0 || x0 > rx1 || p->ymax < ry0 || p->ymin > ry1 || !((p->attr >> 12) & 1)) continue;
+            uint32_t a = (p->texp & 0xffff) * 8, sum = 0;
+            for (uint32_t k = 0; k < 256; k++) sum = sum * 31 + tex8(a + k);
+            fprintf(stderr, "  [render] VBlank %u Zeile %d: tex %08x bei (%.0f,%.0f) Inhalt %08x\n",
+                    gx_vblanks, cur_line, p->texp, x0, p->ymin, sum);
+        }
+    }
     if (getenv("BIS_3DTEX") && npolys[L] && gx_vblanks >= (unsigned)atoi(getenv("BIS_3DTEX"))) {   /* Fehlersuche: Textur-Slots und erste Texturbytes ab VBlank n */
         static int shown;
         if (shown++ < 3) {
@@ -852,12 +874,21 @@ static void render_list(int L) {
     drawn_verts = nverts[L];
 }
 
-void gpu3d_vblank(void) {
-    gx_vblanks++;
-    /* Liste aus dem vorigen Frame zeichnen (die Hardware rendert sie während dieses Frames) */
+/* Übernommene Liste zeichnen - direkt nach dem Listenwechsel im VBlank.
+ * Das Spiel reicht die Liste L(N) im VBlank N ein (Zeile ~196) und lädt gleich danach die
+ * Texturen dafür hoch (Animationsphasen sprechender Figuren, Zeile ~197). Im VBlank N+1 wird
+ * L(N) übernommen, kurz darauf kommen schon die Texturen für L(N+1). Nur unmittelbar nach dem
+ * Wechsel passen Liste und Texturen sicher zusammen. Früher zeichneten wir vor dem Wechsel
+ * (eine Liste zu alt) bzw. in Zeile 215/262 (zu spät; Leerlauf springt außerdem direkt zum
+ * VBlank). Beides ließ sprechende Figuren im Schloss kurz zerfallen. */
+static void gpu3d_render(void) {
     static int skip_render = -1;   /* Messung: BIS_NO3DRENDER=1 ueberspringt das Zeichnen */
     if (skip_render < 0) skip_render = getenv("BIS_NO3DRENDER") != NULL;
     if (pending_valid) { if (!skip_render) render_list(pending_list); pending_valid = 0; }
+}
+
+void gpu3d_vblank(void) {
+    gx_vblanks++;
     if (swap_pending) {
         pending_list = cur_list;
         pending_valid = 1;
@@ -865,6 +896,7 @@ void gpu3d_vblank(void) {
         cur_list ^= 1;
         npolys[cur_list] = nverts[cur_list] = 0;
     }
+    gpu3d_render();
     gq_drain();
 }
 
@@ -882,6 +914,30 @@ void gpu3d_debug(void) {
         for (int k = 0; k < p->n; k++) fprintf(stderr, " (%.1f,%.1f z%.3f w%.0f)", p->v[k].x, p->v[k].y, p->v[k].z, p->v[k].w);
         fprintf(stderr, "\n");
     }
+    const char *raw = getenv("BIS_TEXRAW");   /* Textur-Slots (4 x 128 KB) + Paletten (6 x 16 KB) roh */
+    if (raw) {
+        FILE *f = fopen(raw, "wb");
+        uint8_t *t[4], *pl[6];
+        static const uint8_t zero[0x20000];
+        vram_tex_slots(t, pl);
+        if (f) {
+            for (int i = 0; i < 4; i++) fwrite(t[i] ? t[i] : zero, 1, 0x20000, f);
+            for (int i = 0; i < 6; i++) fwrite(pl[i] ? pl[i] : zero, 1, 0x4000, f);
+            fclose(f);
+        }
+    }
+    const char *rect = getenv("BIS_3DRECT");   /* "x0,y0,x1,y1": Polygone in diesem Bildbereich mit Texturkoordinaten */
+    float rx0, ry0, rx1, ry1;
+    if (rect && sscanf(rect, "%f,%f,%f,%f", &rx0, &ry0, &rx1, &ry1) == 4)
+        for (unsigned i = 0; i < npolys[L]; i++) {
+            const Poly *p = &polys[L][i];
+            float x0 = 1e9f, x1 = -1e9f;
+            for (int k = 0; k < p->n; k++) { if (p->v[k].x < x0) x0 = p->v[k].x; if (p->v[k].x > x1) x1 = p->v[k].x; }
+            if (x1 < rx0 || x0 > rx1 || p->ymax < ry0 || p->ymin > ry1) continue;
+            fprintf(stderr, "  [3drect] %u attr %08x tex %08x pltt %04x:", i, p->attr, p->texp, p->pltt);
+            for (int k = 0; k < p->n; k++) fprintf(stderr, " (%.1f,%.1f st %.1f,%.1f)", p->v[k].x, p->v[k].y, p->v[k].s / 16, p->v[k].t / 16);
+            fprintf(stderr, "\n");
+        }
 }
 
 void gpu3d_init(uint8_t *iop) {
