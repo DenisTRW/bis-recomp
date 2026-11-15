@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # ROMs and saves anywhere; generated output (build/), extracted data and local folders; anything
 # in orig/ except the empty placeholder where the launcher later puts the player's ROM
 FORBIDDEN = re.compile(r"(\.nds|\.srl|\.sav|\.dsv)$|^(extract|build|assets|ghidra|screenshots|saves)/|"
-                       r"^orig/(?!\.gitkeep$)", re.IGNORECASE)
+                       r"^orig/(?!(\.gitkeep|README\.md)$)", re.IGNORECASE)
 # generated recompiler output never lives in the repo, but double-check its file names
 GENERATED = re.compile(r"(^|/)(main|itcm|dtcm|ov\d{3})\.c$", re.IGNORECASE)
 
