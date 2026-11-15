@@ -177,7 +177,9 @@ static void emit_poly(const Vtx *vs, int n) {
     }
     static int frame_polys; static unsigned frame_seen = ~0u;
     if (frame_seen != gx_vblanks) { frame_seen = gx_vblanks; frame_polys = 0; }
-    int frame_dbg = getenv("BIS_3DTEX") && gx_vblanks == (unsigned)atoi(getenv("BIS_3DTEX")) && frame_polys++ < 10;
+    static long dbg_frame = -2;   /* BIS_3DTEX einmal lesen: getenv ist pro Polygon zu teuer */
+    if (dbg_frame == -2) dbg_frame = getenv("BIS_3DTEX") ? atol(getenv("BIS_3DTEX")) : -1;
+    int frame_dbg = dbg_frame >= 0 && (long)gx_vblanks == dbg_frame && frame_polys++ < 10;
     if (frame_dbg) {
         fprintf(stderr, "  [3df] poly attr %08x tex %08x roh-letzt %d %d %d pos12-15 %d %d %d %d proj0/5/12/13/15 %d %d %d %d %d\n",
                 poly_attr_cur, texparam, last_x, last_y, last_z, pos[12], pos[13], pos[14], pos[15], proj[0], proj[5], proj[12], proj[13], proj[15]);
@@ -805,7 +807,9 @@ static void render_list(int L) {
 void gpu3d_vblank(void) {
     gx_vblanks++;
     /* Liste aus dem vorigen Frame zeichnen (die Hardware rendert sie während dieses Frames) */
-    if (pending_valid) { render_list(pending_list); pending_valid = 0; }
+    static int skip_render = -1;   /* Messung: BIS_NO3DRENDER=1 ueberspringt das Zeichnen */
+    if (skip_render < 0) skip_render = getenv("BIS_NO3DRENDER") != NULL;
+    if (pending_valid) { if (!skip_render) render_list(pending_list); pending_valid = 0; }
     if (swap_pending) {
         pending_list = cur_list;
         pending_valid = 1;

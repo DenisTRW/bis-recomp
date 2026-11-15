@@ -37,6 +37,12 @@
 #include "frontend.h"
 #endif
 
+/* Fehlersuche-Schalter, einmal beim Start gelesen (getenv ist zu langsam fuer heisse Pfade) */
+static int dbg_div, dbg_dmalog, dbg_cardlog;
+/* Aufrufstatistik fuer den Bericht: im Testprogramm an, in der spielbaren Version nur mit BIS_PROFILE */
+static int profile_calls = 1;
+
+
 static uint32_t irq_pending_extra;   /* von Geräten angeforderte Interrupts (z. B. Karte fertig) */
 #define IRQ_CARD_DONE (1u << 19)
 
@@ -152,7 +158,7 @@ static void hw_div(void) {
     if (den == 0) { q = num < 0 ? 1 : -1; r = num; }
     else if (num == INT64_MIN && den == -1) { q = num; r = 0; }
     else { q = num / den; r = num % den; }
-    if (getenv("BIS_DIV") && (q > 0x40000000ll || q < -0x40000000ll)) {
+    if (dbg_div && (q > 0x40000000ll || q < -0x40000000ll)) {
         static int shown;
         if (shown++ < 30) fprintf(stderr, "  [div] Modus %u: %lld / %lld = %lld  (DIVCNT %04x)\n", cnt, (long long)num, (long long)den, (long long)q, io16(0x280));
     }
@@ -207,7 +213,7 @@ static void dma_copy(int ch) {
     if (((cnt >> 21) & 3) == 3) dma_idst[ch] = io32(base + 4);   /* Ziel "Inkrement+Neuladen" */
     uint32_t src = dma_isrc[ch], dst = dma_idst[ch];
     uint32_t n = cnt & 0x1fffff; if (!n) n = 0x200000;
-    if (getenv("BIS_DMALOG")) {
+    if (dbg_dmalog) {
         static int shown;
         if (shown++ < 40) fprintf(stderr, "  [dma] Kanal %d: %08x -> %08x, %u x %d Bytes, CNT %08x (Frame %llu)\n", ch, src, dst, n,
                                   (cnt >> 26) & 1 ? 4 : 2, cnt, (unsigned long long)watch_frames());
@@ -278,7 +284,7 @@ static int dma_card_armed(void) {
 }
 static void card_fire(void);
 static void card_schedule(void) {
-    if (getenv("BIS_CARDLOG")) fprintf(stderr, "  [karte] planen? aktiv %d, DMA bereit %d, Countdown %u\n",
+    if (dbg_cardlog) fprintf(stderr, "  [karte] planen? aktiv %d, DMA bereit %d, Countdown %u\n",
                                        card_transfer_active(), dma_card_armed(), card_countdown);
     if (card_transfer_active() && dma_card_armed() && !card_countdown && !card_fire_pending) {
         if (!card_delay) { card_fire(); return; }   /* BIS_CARD_DELAY=0: sofort (altes Verhalten) */
@@ -289,7 +295,7 @@ static void card_schedule(void) {
 static void card_done_check(void);
 static void card_fire(void) {
     card_fire_pending = 0;
-    if (getenv("BIS_CARDLOG")) fprintf(stderr, "  [karte] DMA ausgeloest (aktiv %d, DMA bereit %d)\n", card_transfer_active(), dma_card_armed());
+    if (dbg_cardlog) fprintf(stderr, "  [karte] DMA ausgeloest (aktiv %d, DMA bereit %d)\n", card_transfer_active(), dma_card_armed());
     platform_inhibit_irq++;
     dma_card();
     card_done_check();
@@ -425,7 +431,7 @@ static void io_write_inner(uint32_t a, uint32_t v, int size) {
     if (off >= 0xb8 && off < 0xe0) {
         int ch = (off - 0xb0) / 12;
         if ((off - 0xb0) % 12 >= 8) {
-            if (getenv("BIS_CARDLOG")) fprintf(stderr, "  [dma] Kanal %d CNT = %08x (Schreiben %d Bytes auf %03x), SRC %08x DST %08x\n",
+            if (dbg_cardlog) fprintf(stderr, "  [dma] Kanal %d CNT = %08x (Schreiben %d Bytes auf %03x), SRC %08x DST %08x\n",
                                                ch, io32(0xb0 + (uint32_t)ch * 12 + 8), size, off, io32(0xb0 + (uint32_t)ch * 12), io32(0xb4 + (uint32_t)ch * 12));
             dma_run(ch);
             /* Karten-DMA kann auch nach dem Start der Karte eingerichtet werden */
@@ -668,6 +674,7 @@ void rc_enter(CPU *c, uint32_t addr) {
         }
     }
     fn_entries++;
+    if (!profile_calls) return;   /* Aufrufstatistik (teuer: Suche bei jedem Aufruf) */
     FnInfo *f = find_fn(addr);
     if (f) {
         if (f->calls++ == 0)
@@ -1280,6 +1287,12 @@ static int take_options(int argc, char **argv) {
 
 int main(int argc, char **argv) {
     argc = take_options(argc, argv);
+    dbg_div = getenv("BIS_DIV") != NULL; dbg_dmalog = getenv("BIS_DMALOG") != NULL; dbg_cardlog = getenv("BIS_CARDLOG") != NULL;
+#ifdef PLATFORM_SDL
+    profile_calls = getenv("BIS_PROFILE") != NULL;
+#else
+    profile_calls = getenv("BIS_NOPROFILE") == NULL;
+#endif
     if (argc < 2) {
         fprintf(stderr, "Aufruf: %s <extract/eur> [frames] [budget_mio]\n", argv[0]);
         return 2;

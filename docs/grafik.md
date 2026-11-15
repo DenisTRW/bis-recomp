@@ -255,6 +255,28 @@ Weitere abgeschnittene Funktion behoben: `func_ov012_02074a54` (Sprungtabelle bi
 Prüfsummen der drei Referenzläufe unverändert (der Code läuft dort noch nicht).
 Neue Hilfen: `BIS_GXLOG=n` (alle GX-Befehle eines VBlanks), `BIS_GXMTX=a-b`,
 `BIS_3DTEX=n` (Textur-Slots und Polygone eines VBlanks).
+## Geschwindigkeit („Ruckeln“) – Stand
+
+Gemessen mit `boot_test` (ohne Fenster), „Neues Spiel“, Toad Town (Frame 2300–3600):
+
+| Änderung | Hardware-Frames/s |
+|---|---|
+| Ausgangslage | 21 |
+| Aufrufstatistik in der spielbaren Version aus (`BIS_PROFILE` schaltet sie ein), `getenv` aus heißen Pfaden entfernt | 27 |
+| Spielcode mit `-O2` statt `-O1` | 28 (kaum Gewinn, nicht übernommen) |
+| 3D-Zeichnen übersprungen (`BIS_NO3DRENDER=1`, nur Messung) | 27 (3D ist nicht die Bremse) |
+| Thread-Wechsel auch in Warteschleifen nach Interrupts | 27 (kein Gewinn, zurückgenommen) |
+
+Zwei getrennte Ursachen bleiben:
+1. **Durchsatz:** Ein Hardware-Frame entspricht bei uns 2^22 Speicherzugriffen (Takt-Modell);
+   jeder Zugriff läuft über `rd*/wr*` mit Zähler, Interrupt-Prüfung und Seitensuche. Ergebnis
+   ~27 statt 60 Frames/s. Ansatz: schneller Pfad für RAM-Zugriffe (inline, ohne Prüfungen),
+   Interrupt-Prüfung seltener.
+2. **Spiellogik nur jeden 3. Frame:** Die Hauptschleife der Szene (`func_ov004_020cead8`)
+   läuft ~0,33-mal pro Frame. Sie wartet bei `.L_020cec58` auf ein Flag (`0x0212a0d6`), das
+   erst beim übernächsten VBlank gelöscht wird. Vermutlich hängt das an der um einen Frame
+   verzögerten 3D-Übernahme oder am Takt-Modell. Ansatz: Abgleich mit DeSmuME, wie oft die
+   Schleife dort pro Frame läuft.
 ## VRAM-Bänke – `recomp/runtime/vram.c`
 
 9 Bänke (A–I) mit eigenem Speicher. Die Zuordnung folgt `VRAMCNT` (`0x04000240–0x04000249`,
