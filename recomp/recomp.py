@@ -590,16 +590,30 @@ class Translator:
         return f"{rd} = {a} - {b};"
 
     def jumptable(self, idx_reg, insn):
-        """mwcc: cmp rN, #k / addls pc, pc, rN, lsl #2 / b default / b case0 ..."""
-        # Obergrenze aus dem vorherigen cmp holen
+        """mwcc: cmp rN, #k / addls pc, pc, rN, lsl #2 / b default / b case0 ...
+
+        Nur bei 'ls'/'lo' ist das cmp davor die Obergrenze. mwcc erzeugt auch
+        'cmp rN, #k / bgt ... / cmp rN, #0 / addge pc, pc, rN, lsl #2': dort prüft das letzte
+        cmp nur die Untergrenze (GX_SetBankForBG 0x02035688: früher nur 'case 0', dadurch
+        bekam Engine A nie ihren BG-Speicher und Sprechblasen fehlten). Dann wird die Tabelle
+        selbst ausgemessen: die unbedingten 'b'-Befehle ab pc+8."""
+        cond = parse_mnemonic(insn.mn)[1].get("cond")
         prev = [i for i in self.f.insns if i.addr < insn.addr][-4:]
         limit = None
-        for p in reversed(prev):
-            if p.mn == "cmp":
-                o = split_ops(p.ops)
-                if o[0].strip() == idx_reg and o[1].startswith("#"):
-                    limit = imm(o[1])
-                break
+        if cond in ("ls", "lo", "cc"):
+            for p in reversed(prev):
+                if p.mn == "cmp":
+                    o = split_ops(p.ops)
+                    if o[0].strip() == idx_reg and o[1].startswith("#"):
+                        limit = imm(o[1]) - (cond != "ls")
+                    break
+        else:
+            by_addr = {i.addr: i for i in self.f.insns}
+            n = 0
+            while (t := by_addr.get(insn.addr + 8 + 4 * n)) is not None and t.mn == "b":
+                n += 1
+            if n:
+                limit = n - 1
         if limit is None:
             raise Unsupported("Sprungtabelle ohne Grenze")
         r = self.reg(idx_reg, insn)

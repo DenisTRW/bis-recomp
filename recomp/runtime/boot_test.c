@@ -325,8 +325,9 @@ static void card_fire(void) {
  * (0x0203a598, Handler 0x0203a690). Pegelgesteuert wie auf der Hardware. */
 static void gx_fifo_irq(void) {
     uint32_t mode = io32(0x600) >> 30;
-    if (mode == 1 || mode == 2) {
-        HLE(SIMULIERT, "3D: GX-FIFO-Interrupt (FIFO immer leer)");
+    unsigned lvl = gpu3d_fifo_level();   /* > 0 nur nach SWAP_BUFFERS bis zum VBlank */
+    if ((mode == 1 && lvl < 128) || (mode == 2 && lvl == 0)) {
+        HLE(SIMULIERT, "3D: GX-FIFO-Interrupt (FIFO-Stand bis zum VBlank, sonst leer)");
         irq_pending_extra |= 1u << 21;
     }
 }
@@ -600,7 +601,9 @@ static uint32_t rd_ring[16], rd_pos;   /* letzte Lesezugriffe außerhalb von Int
  * ohne Abkürzung - der Ablauf ist bitgleich, nur schneller. */
 static uint32_t spin_loop_at;
 static uint64_t spin_at, spin_stamp, spin_skipped;
-static int ram_addr(uint32_t a) { return (a >> 24) == 0x02 || (a >> 24) == 0x01; }
+/* Darf eine Warteschleife hier lesen? RAM, und GXSTAT: das ändert sich nur durch GX-Befehle
+ * (schreibt die Schleife nicht) oder im VBlank (ein Ereignis, vor dem wir ohnehin anhalten). */
+static int ram_addr(uint32_t a) { return (a >> 24) == 0x02 || (a >> 24) == 0x01 || (a & ~3u) == 0x04000600u; }
 static uint64_t until(uint64_t d, uint64_t m) { return m < d ? m : d; }
 void rc_spin(CPU *c, uint32_t loop, uint32_t n) {
     (void)c;
@@ -908,6 +911,24 @@ static void dump_frame(const char *tag) {
         "Renderer: affine/erweiterte Hintergruende", "Renderer: 3D-Ebene (BG0 von Engine A)",
         "Renderer: affine Sprites", "Renderer: Bitmap-Sprites", "Renderer: Fenster",
         "Renderer: Alpha-Blending", "Renderer: Anzeigemodus 2/3 (VRAM/Hauptspeicher)", "Renderer: Mosaik" };
+    if (getenv("BIS_LAYERPNG")) {   /* Fehlersuche: jede Ebene einzeln (BG0-3, Sprites) */
+        unsigned keep = render2d_layer_mask, m2 = 0;
+        for (int l = 0; l < 5; l++) {
+            render2d_layer_mask = 1u << l;
+            render2d_engine(&g, a_on_top ? 0 : 1, both, 0, &m2);
+            render2d_engine(&g, a_on_top ? 1 : 0, both + 256 * 192, 0, &m2);
+            snprintf(path, sizeof path, "%s/frame_%s_L%d.png", frames_dir, tag, l);
+            png_write_rgb(path, 256, 384, both);
+        }
+        render2d_layer_mask = keep;
+        for (int e = 0; e < 2; e++) {
+            uint32_t b = e ? 0x1000 : 0;
+            fprintf(stderr, "  [2d] Bild %s Engine %c: DISPCNT %08x BGCNT %04x %04x %04x %04x BLDCNT %04x WININ %04x WINOUT %04x\n",
+                    tag, 'A' + e, io32(b), io16(b + 8), io16(b + 10), io16(b + 12), io16(b + 14), io16(b + 0x50), io16(b + 0x48), io16(b + 0x4a));
+        }
+    }
+    if (missing && getenv("BIS_MISSLOG"))   /* Fehlersuche: was fehlt in welchem Bild */
+        fprintf(stderr, "  [2d] Bild %s: fehlt %02x  DISPCNT A %08x B %08x\n", tag, missing, io32(0x000), io32(0x1000));
     for (int i = 0; i < 8; i++) if (missing & (1u << i)) HLE(FEHLT, miss_name[i]);
     HLE(ORIGINAL, "Renderer: Text-Hintergruende, Sprites, Paletten, Helligkeit, Blending");
     static const char *const g3d_name[] = {
@@ -992,6 +1013,7 @@ static void vblank(CPU *c) {
     }
     platform_inhibit_irq++;
     gpu3d_vblank();     /* 3D: Liste des vorigen Frames zeichnen, neue übernehmen */
+    gx_fifo_irq();      /* FIFO wurde geleert: ggf. Interrupt */
     dma_vblank();
     platform_inhibit_irq--;
 #ifndef PLATFORM_SDL

@@ -232,6 +232,8 @@ und Vorgeschichte bzw. Schreibzugriffe mit Frame, `lr`, `sp` und Vorgeschichte. 
 | `BIS_CARD_DELAY=n` | Karten-DMA nach n Speicherzugriffen (Standard 2048, 0 = sofort/alt) |
 | `BIS_NOSPIN=1` | Warteschleifen nicht abkürzen (Vergleich, siehe „60 Bilder/s“) |
 | `BIS_HOSTPROF=datei` | Rechenzeit-Profil auf dem PC (ab `BIS_PROFILE_FROM`), Auswertung `recomp/tools/hostprof.py` |
+| `BIS_LAYERPNG=1` | zu jedem Bild jede Ebene einzeln (`frame_<n>_L0..L4.png`: BG0-3, Sprites) plus DISPCNT/BGCNT/BLDCNT |
+| `BIS_MISSLOG=1` | pro ausgegebenem Bild melden, welche Renderer-Funktionen fehlten |
 
 Funktionsverfolgung mit mehreren Adressen: `boot_test.exe … 0 "0201c9ac,0203dd70"`.
 
@@ -327,16 +329,43 @@ verbliebener Posten: der 3D-Software-Renderer (`gpu3d_vblank`, `plot`).
 Laufen und Sprechen in Toad Town funktionieren und fühlen sich mit dem Bildzeilen-Modell
 flüssig an (damals ~30 Bilder/s im Fenster, inzwischen 60). Zwei sichtbare Fehler:
 
-1. **Keine Sprechblasen / kein Text.** Vermutung: Die Textboxen nutzen Grafikfunktionen, die
-   der 2D-Renderer noch nicht kann (in der Tabelle oben als FEHLT): affine bzw. erweiterte
-   Hintergründe, Fenster oder affine Sprites (Aufploppen mit Skalierung). Erster Schritt:
-   beim Gespräch `DISPCNT`/`BGCNT` und die betroffenen OAM-Einträge (Affin-Bit) ausgeben.
+1. ~~**Keine Sprechblasen / kein Text.**~~ Gelöst, siehe nächster Abschnitt. Die Vermutung
+   (affine Sprites/BGs) war falsch.
 2. **Figuren-Animationen verzerrt/glitchig.** Vermutung: affine Sprites (Strecken/Stauchen
    beim Laufen) werden nicht umgesetzt. Erster Schritt: OAM-Einträge mit Bit 8 (Affin) und
-   die Parameter-Gruppen auswerten, dann affine Sprites im Renderer ergänzen.
+   die Parameter-Gruppen auswerten, dann affine Sprites im Renderer ergänzen. Aber: Bis
+   Frame 4500 meldet `BIS_MISSLOG` kein einziges affines Sprite.
 
-Beides gehört vermutlich zur selben Baustelle: **affine Sprites und Hintergründe im
-2D-Renderer** (`recomp/runtime/render2d.c`).
+### Gelöst: Sprechblasen (15.11.2026)
+
+Die Sprechblase („Mom, I'm home!“ bei Frame ~4100 im Lauf „Neues Spiel“) liegt auf BG1 von
+Engine A (Text-BG, Kacheln ab `0x06000000`, Kachelplan ab `0x06004800`). Das Spiel schrieb
+sie dorthin, aber auf `0x06000000` lag **keine VRAM-Bank**: Die Schreibzugriffe gingen ins
+Leere (wie auf echter Hardware ohne Zuordnung). Drei Fehler:
+
+1. **Recompiler, Sprungtabellen mit `addge`.** mwcc erzeugt neben
+   `cmp rN, #k / addls pc, pc, rN, lsl #2` auch
+   `cmp rN, #k / bgt … / cmp rN, #0 / addge pc, pc, rN, lsl #2`. Das letzte `cmp` ist dort
+   nur die Untergrenze; der Recompiler nahm es als Obergrenze und erzeugte nur `case 0`.
+   Betroffen waren 15 Tabellen, darunter `GX_SetBankForBG` (`0x02035688`): Der Aufruf mit
+   Bank E (Frame 2232) schrieb nie `VRAMCNT_E = 0x81`. Jetzt wird bei anderen Bedingungen als
+   `ls`/`lo` die Tabelle selbst ausgemessen (aufeinanderfolgende `b`-Befehle ab pc+8). Auch
+   die 12 `addpl`-Tabellen haben jetzt die richtige Länge (vorher eine fremde Konstante,
+   für gültige Indizes harmlos).
+2. **GX-FIFO hält nach `SWAP_BUFFERS` bis zum VBlank an.** Bei uns lief die
+   Geometrie-Engine weiter: Das Spiel wartet in `func_02036c6c` mit
+   `while (GXSTAT & 0x08000000)` darauf und schickte so bis zu vier Szenen pro Bild in
+   dieselbe Liste (Polygonspeicher voll, 6144 Vertices). Jetzt werden Befehle nach dem Swap
+   gepuffert und im VBlank ausgeführt; GXSTAT meldet „beschäftigt“, Füllstand, halb voll und
+   leer, der FIFO-Interrupt richtet sich danach (`gpu3d.c`: `gq_*`).
+3. **Warteschleifen auf GXSTAT** dürfen jetzt ebenfalls übersprungen werden (GXSTAT ändert
+   sich nur durch GX-Befehle oder im VBlank, ein Ereignis). Ohne das dauerte ein Lauf von
+   4500 Frames 4½ min statt 30 s; die Prüfsumme ist mit und ohne `BIS_NOSPIN` gleich.
+
+Nebenbei erscheint jetzt auch das Ortsschild „Toad Town“. Neue Referenz-Prüfsummen (der
+Spielablauf ändert sich durch 1. und 2. absichtlich): ohne Eingabe (3000)
+`666210be1076f442`, `1100:start,1400:a` (3000) `bd1d82a4df0d85ac`, Neues Spiel
+`1100:start,1400:a,1900:a,2200:a` (3600, Standard-Budget) `de7e0c8edb5b2b72`.
 ## VRAM-Bänke – `recomp/runtime/vram.c`
 
 9 Bänke (A–I) mit eigenem Speicher. Die Zuordnung folgt `VRAMCNT` (`0x04000240–0x04000249`,

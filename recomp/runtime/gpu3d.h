@@ -18,6 +18,7 @@ void gpu3d_init(uint8_t *io);                 /* io = I/O-Register ab 0x04000000
 void gpu3d_write(uint32_t off, uint32_t v);   /* 32-Bit-Schreibzugriff auf 0x400-0x5ff */
 void gpu3d_regs(void);                        /* GXSTAT, RAM_COUNT, Testergebnisse nach io[] */
 void gpu3d_ack_error(void);                   /* GXSTAT Bit 15 geschrieben: Stapelfehler löschen */
+unsigned gpu3d_fifo_level(void);              /* Einträge im GX-FIFO (nach SWAP_BUFFERS bis zum VBlank) */
 void gpu3d_vblank(void);                      /* VBlank: Liste zeichnen / übernehmen */
 const Px3D *gpu3d_frame(void);                /* 256x192 */
 

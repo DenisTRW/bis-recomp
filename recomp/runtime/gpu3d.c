@@ -360,7 +360,48 @@ static void gx_log(uint8_t cmd, const uint32_t *p) {
     fprintf(stderr, "\n");
 }
 
+/* Nach SWAP_BUFFERS hält die Geometrie-Engine bis zum nächsten VBlank an (GXSTAT Bit 27
+ * "beschäftigt"); weitere Befehle bleiben so lange im FIFO. Wir puffern sie hier (ohne die
+ * 256-Einträge-Grenze) und führen sie nach dem Listenwechsel im VBlank aus. Ohne das liefen
+ * mehrere Szenen in dieselbe Liste und der Polygonspeicher lief über (Gespräche im Feld). */
+#define GQ_WORDS (1u << 20)
+static uint32_t gq[GQ_WORDS];
+static unsigned gq_head, gq_tail, gq_level, gq_draining;   /* gq_level: FIFO-Einträge */
+static void run_cmd(uint8_t cmd, const uint32_t *p);
+
 static void exec_cmd(uint8_t cmd, const uint32_t *p) {
+    if (!gq_draining && (swap_pending || gq_head != gq_tail)) {
+        int np = nparams[cmd] > 0 ? nparams[cmd] : 0;
+        if (gq_tail + 1u + (unsigned)np > GQ_WORDS) { flags |= G3D_MISS_OVERFLOW; return; }
+        gq[gq_tail++] = cmd | (uint32_t)np << 8;
+        for (int i = 0; i < np; i++) gq[gq_tail++] = p[i];
+        gq_level += np ? (unsigned)np : 1u;
+        return;
+    }
+    run_cmd(cmd, p);
+}
+
+/* VBlank: gepufferte Befehle ausführen, bis wieder ein SWAP_BUFFERS kommt */
+static void gq_drain(void) {
+    gq_draining = 1;
+    while (gq_head != gq_tail && !swap_pending) {
+        uint32_t w = gq[gq_head++];
+        unsigned np = (w >> 8) & 0xff;
+        run_cmd((uint8_t)w, &gq[gq_head]);
+        gq_head += np;
+        gq_level -= np ? np : 1u;
+    }
+    if (gq_head == gq_tail) gq_head = gq_tail = gq_level = 0;
+    else if (gq_head > GQ_WORDS / 2) {   /* Rest nach vorne schieben */
+        memmove(gq, gq + gq_head, (gq_tail - gq_head) * sizeof gq[0]);
+        gq_tail -= gq_head; gq_head = 0;
+    }
+    gq_draining = 0;
+}
+
+unsigned gpu3d_fifo_level(void) { return gq_level; }
+
+static void run_cmd(uint8_t cmd, const uint32_t *p) {
     cmd_count++;
     gx_log(cmd, p);
     Mtx m;
@@ -524,7 +565,12 @@ void gpu3d_regs(void) {
     st |= (uint32_t)(pos_sp & 31) << 8;
     st |= (uint32_t)(proj_sp & 1) << 13;
     st |= (uint32_t)stack_err << 15;
-    st |= 1u << 25 | 1u << 26;               /* FIFO leer, nie beschäftigt */
+    /* FIFO-Füllstand (Bits 16-24, max. 256), unter halb voll (25), leer (26), beschäftigt (27) */
+    unsigned lvl = gq_level > 256 ? 256 : gq_level;
+    st |= (uint32_t)lvl << 16;
+    if (lvl < 128) st |= 1u << 25;
+    if (!lvl) st |= 1u << 26;
+    if (swap_pending || gq_level) st |= 1u << 27;
     w32(0x600, st);
     int show = pending_valid ? pending_list : cur_list;
     w32(0x604, (npolys[show] & 0xfff) | (nverts[show] & 0x1fff) << 16);
@@ -819,6 +865,7 @@ void gpu3d_vblank(void) {
         cur_list ^= 1;
         npolys[cur_list] = nverts[cur_list] = 0;
     }
+    gq_drain();
 }
 
 const Px3D *gpu3d_frame(void) { return frame; }
