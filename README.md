@@ -158,10 +158,10 @@ report: `recomp\runtime\run_boot.bat <frames> <memory-access budget in millions>
 
 | Key | DS |
 |---|---|
-| Arrow keys | D-Pad |
-| X / C | A / B |
-| S / D | X / Y |
-| Q / W | L / R |
+| W A S D (or arrow keys) | D-Pad |
+| K / J | A / B |
+| I / U | X / Y |
+| Q / E | L / R |
 | Enter / Backspace | Start / Select |
 | F11 / Esc | Fullscreen / Quit |
 

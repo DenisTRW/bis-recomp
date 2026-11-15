@@ -26,11 +26,11 @@ Titel und der Bericht in der Konsole.
 
 | Taste | DS |
 |---|---|
-| Pfeiltasten | Steuerkreuz |
-| X / C | A (Mario) / B (Luigi) |
-| S / D | X / Y |
+| W A S D (oder Pfeiltasten) | Steuerkreuz |
+| K / J | A (Mario) / B (Luigi) |
+| I / U | X / Y |
 | Enter / Rücktaste | Start / Select |
-| Q / W | L / R |
+| Q / E | L / R |
 | F11 / Esc | Vollbild / Beenden |
 
 X/Y liest das Spiel nicht aus einem Register, sondern aus `HW_BUTTON_XY_BUF` (`0x027fffa8`,

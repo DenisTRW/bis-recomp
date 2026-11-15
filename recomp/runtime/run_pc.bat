@@ -1,7 +1,7 @@
 @echo off
 rem Startet den PC-Prototyp im Fenster (SDL3). Baut vorher alles, was sich geaendert hat.
-rem Tasten: Pfeile = Steuerkreuz, X = A, C = B, S = X, D = Y, Enter = Start,
-rem         Ruecktaste = Select, Q = L, W = R, F11 = Vollbild, Esc = Beenden
+rem Tasten: WASD (oder Pfeile) = Steuerkreuz, K = A, J = B, I = X, U = Y, Enter = Start,
+rem         Ruecktaste = Select, Q = L, E = R, F11 = Vollbild, Esc = Beenden
 setlocal
 for %%I in ("%~dp0..\..") do set "ROOT=%%~fI"
 set "PATH=%ROOT%\tools\w64devkit\bin;%PATH%"

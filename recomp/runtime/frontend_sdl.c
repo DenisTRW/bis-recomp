@@ -1,10 +1,11 @@
 /* Fenster-Frontend mit SDL3.
  *
  * Tastenbelegung (vorläufig, später frei einstellbar):
- *   Pfeiltasten  Steuerkreuz        X  A (Mario)        C  B (Luigi)
- *   S            X                  D  Y
+ *   W A S D      Steuerkreuz (Pfeiltasten gehen auch)
+ *   K            A (Mario)          J  B (Luigi)
+ *   I            X                  U  Y
+ *   Q            L                  E  R
  *   Enter        Start              Rücktaste / rechte Umschalttaste  Select
- *   Q            L                  W  R
  *   F11          Vollbild an/aus    Esc  beenden
  * Das Bild wird ohne Verzerrung skaliert (Balken an den Seiten bei Bedarf).
  */
@@ -94,20 +95,20 @@ int frontend_poll(uint16_t *keys, uint16_t *xy) {
     }
     const bool *k = SDL_GetKeyboardState(NULL);
     uint16_t pressed = 0;
-    if (k[SDL_SCANCODE_X]) pressed |= 1u << 0;                 /* A */
-    if (k[SDL_SCANCODE_C]) pressed |= 1u << 1;                 /* B */
+    if (k[SDL_SCANCODE_K]) pressed |= 1u << 0;                 /* A */
+    if (k[SDL_SCANCODE_J]) pressed |= 1u << 1;                 /* B */
     if (k[SDL_SCANCODE_BACKSPACE] || k[SDL_SCANCODE_RSHIFT]) pressed |= 1u << 2;   /* Select */
     if (k[SDL_SCANCODE_RETURN]) pressed |= 1u << 3;            /* Start */
-    if (k[SDL_SCANCODE_RIGHT]) pressed |= 1u << 4;
-    if (k[SDL_SCANCODE_LEFT]) pressed |= 1u << 5;
-    if (k[SDL_SCANCODE_UP]) pressed |= 1u << 6;
-    if (k[SDL_SCANCODE_DOWN]) pressed |= 1u << 7;
-    if (k[SDL_SCANCODE_W]) pressed |= 1u << 8;                 /* R */
+    if (k[SDL_SCANCODE_D] || k[SDL_SCANCODE_RIGHT]) pressed |= 1u << 4;
+    if (k[SDL_SCANCODE_A] || k[SDL_SCANCODE_LEFT]) pressed |= 1u << 5;
+    if (k[SDL_SCANCODE_W] || k[SDL_SCANCODE_UP]) pressed |= 1u << 6;
+    if (k[SDL_SCANCODE_S] || k[SDL_SCANCODE_DOWN]) pressed |= 1u << 7;
+    if (k[SDL_SCANCODE_E]) pressed |= 1u << 8;                 /* R */
     if (k[SDL_SCANCODE_Q]) pressed |= 1u << 9;                 /* L */
     *keys = (uint16_t)(0x03ff & ~pressed);
     uint16_t x_y = 0x0c00;
-    if (k[SDL_SCANCODE_S]) x_y &= ~0x0400;                     /* X */
-    if (k[SDL_SCANCODE_D]) x_y &= ~0x0800;                     /* Y */
+    if (k[SDL_SCANCODE_I]) x_y &= ~0x0400;                     /* X */
+    if (k[SDL_SCANCODE_U]) x_y &= ~0x0800;                     /* Y */
     *xy = x_y;
     return 1;
 }
