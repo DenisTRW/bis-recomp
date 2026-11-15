@@ -963,7 +963,7 @@ static void resched_if_pending(CPU *c) {
 /* ---- Eingabe-Automatik (Tests ohne Fenster), Umgebungsvariable BIS_INPUT:
  *   "1100:start,1300:a,1500:a"  -> Taste ab diesem Frame für 6 Frames gedrückt
  * Tasten: a b x y start select up down left right l r. Reproduzierbar, da an Frames gebunden. */
-static struct { uint64_t frame; uint16_t keybit; int xy; } script[64];
+static struct { uint64_t frame; uint16_t keybit; int xy; } script[1024];
 static int script_n;
 
 static void script_load(void) {
@@ -974,7 +974,7 @@ static void script_load(void) {
         { "a", 1 << 0, 0 }, { "b", 1 << 1, 0 }, { "select", 1 << 2, 0 }, { "start", 1 << 3, 0 },
         { "right", 1 << 4, 0 }, { "left", 1 << 5, 0 }, { "up", 1 << 6, 0 }, { "down", 1 << 7, 0 },
         { "r", 1 << 8, 0 }, { "l", 1 << 9, 0 }, { "x", 0x400, 1 }, { "y", 0x800, 1 } };
-    while (s && *s && script_n < 64) {
+    while (s && *s && script_n < 1024) {
         char key[16] = { 0 };
         unsigned long long f;
         if (sscanf(s, "%llu:%15[a-z]", &f, key) != 2) break;

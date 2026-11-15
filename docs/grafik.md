@@ -331,10 +331,12 @@ flüssig an (damals ~30 Bilder/s im Fenster, inzwischen 60). Zwei sichtbare Fehl
 
 1. ~~**Keine Sprechblasen / kein Text.**~~ Gelöst, siehe nächster Abschnitt. Die Vermutung
    (affine Sprites/BGs) war falsch.
-2. **Figuren-Animationen verzerrt/glitchig.** Vermutung: affine Sprites (Strecken/Stauchen
-   beim Laufen) werden nicht umgesetzt. Erster Schritt: OAM-Einträge mit Bit 8 (Affin) und
-   die Parameter-Gruppen auswerten, dann affine Sprites im Renderer ergänzen. Aber: Bis
-   Frame 4500 meldet `BIS_MISSLOG` kein einziges affines Sprite.
+2. **Figuren-Animationen verzerrt/glitchig.** Vermutlich mit dem GX-FIFO-Fix (nächster
+   Abschnitt) erledigt: Vorher landeten bis zu vier Szenen mit verschiedenen
+   Animationsphasen in derselben 3D-Liste, und die Eröffnung lief etwa dreimal zu schnell.
+   Im Lauf bis Frame 22000 (Schloss, Mario und Luigi laufen und springen) sind die Figuren
+   sauber, und `BIS_MISSLOG` meldet kein affines Sprite. Noch durch einen Spieltest zu
+   bestätigen. `BIS_INPUT` nimmt jetzt bis zu 1024 Tasten an (vorher 64).
 
 ### Gelöst: Sprechblasen (15.11.2026)
 
