@@ -21,7 +21,7 @@ MILESTONES = [
     ("Title screen", True),
     ("File select", True),
     ("New game: opening scene", True),
-    ("Walking and talking in the field", False),
+    ("Walking and talking in the field", True),
     ("Battles", False),
     ("Sound and music", False),
     ("Touch screen and controller", False),

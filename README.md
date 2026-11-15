@@ -36,7 +36,7 @@ card, the ARM7 co-processor, …).
 | ✅ | Title screen |
 | ✅ | File select |
 | ✅ | New game: opening scene |
-| ⬜ | Walking and talking in the field |
+| ✅ | Walking and talking in the field |
 | ⬜ | Battles |
 | ⬜ | Sound and music |
 | ⬜ | Touch screen and controller |

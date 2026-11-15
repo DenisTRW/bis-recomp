@@ -296,6 +296,21 @@ Offen: ob 2 pro Frame dem Original entspricht – Referenz mit DeSmuME (`RATE`-Z
 
 Neue Referenz-Prüfsummen: ohne Eingabe (3000) `ac1b83dc7b22181a`, Dateiauswahl
 (`1100:start,1400:a`, 3000) `698b1d268279c0e7`, Neues Spiel (3600) `a7e0ce4199bcc8d6`.
+### Offen nach Spieltest (15.11.2026)
+
+Laufen und Sprechen in Toad Town funktionieren und fühlen sich mit dem Bildzeilen-Modell
+flüssig an (~30 Bilder/s im Fenster). Zwei sichtbare Fehler:
+
+1. **Keine Sprechblasen / kein Text.** Vermutung: Die Textboxen nutzen Grafikfunktionen, die
+   der 2D-Renderer noch nicht kann (in der Tabelle oben als FEHLT): affine bzw. erweiterte
+   Hintergründe, Fenster oder affine Sprites (Aufploppen mit Skalierung). Erster Schritt:
+   beim Gespräch `DISPCNT`/`BGCNT` und die betroffenen OAM-Einträge (Affin-Bit) ausgeben.
+2. **Figuren-Animationen verzerrt/glitchig.** Vermutung: affine Sprites (Strecken/Stauchen
+   beim Laufen) werden nicht umgesetzt. Erster Schritt: OAM-Einträge mit Bit 8 (Affin) und
+   die Parameter-Gruppen auswerten, dann affine Sprites im Renderer ergänzen.
+
+Beides gehört vermutlich zur selben Baustelle: **affine Sprites und Hintergründe im
+2D-Renderer** (`recomp/runtime/render2d.c`).
 ## VRAM-Bänke – `recomp/runtime/vram.c`
 
 9 Bänke (A–I) mit eigenem Speicher. Die Zuordnung folgt `VRAMCNT` (`0x04000240–0x04000249`,
