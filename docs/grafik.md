@@ -277,6 +277,25 @@ Zwei getrennte Ursachen bleiben:
    erst beim übernächsten VBlank gelöscht wird. Vermutlich hängt das an der um einen Frame
    verzögerten 3D-Übernahme oder am Takt-Modell. Ansatz: Abgleich mit DeSmuME, wie oft die
    Schleife dort pro Frame läuft.
+### Bildzeilen-Zeitmodell (behebt den 3-Frame-Takt)
+
+Stichproben-Profil (`BIS_PROFILE_FROM=3000`, Bericht „Zugriffs-Profil“): In Toad Town gingen
+84,6 % aller Speicherzugriffe in eine Warteschleife auf `0x0212a0d6` (Bit 0 von
+`[obj+0x16]`, gesetzt in `func_ov004_020cef7c`/`020ceec4`, gelöscht vom **VCount-Interrupt**)
+und 14,7 % auf `0x0212a09e`. Das Spiel synchronisiert sich mehrmals pro Bild auf bestimmte
+Bildzeilen; unser Modell löste den VCount-Interrupt aber nur einmal pro Frame aus.
+
+Neu: Ein Frame (2^22 Zugriffe) hat 263 Zeilen (`LINE_LEN`), Zeile 192 = VBlank. `VCOUNT` und
+die DISPSTAT-Flags folgen der Zeit, der VCount-Interrupt kommt in der eingestellten Zeile
+(`line_event`), im Halt springt die Zeit bis zur VCount-Zeile (`halt_to_vcount`).
+
+Ergebnis Toad Town: Hauptschleife 0,33 → **2 Durchläufe pro Frame**, emulierte Frames/s
+27 → 35; die Eröffnung läuft sichtbar weiter (Frame 3600 zeigt schon die nächste Szene).
+Offen: ob 2 pro Frame dem Original entspricht – Referenz mit DeSmuME (`RATE`-Zeilen in
+`recomp/tools/desmume_probe.lua`).
+
+Neue Referenz-Prüfsummen: ohne Eingabe (3000) `ac1b83dc7b22181a`, Dateiauswahl
+(`1100:start,1400:a`, 3000) `698b1d268279c0e7`, Neues Spiel (3600) `a7e0ce4199bcc8d6`.
 ## VRAM-Bänke – `recomp/runtime/vram.c`
 
 9 Bänke (A–I) mit eigenem Speicher. Die Zuordnung folgt `VRAMCNT` (`0x04000240–0x04000249`,

@@ -84,6 +84,12 @@ local function log_clip()
 end
 local clip_lines = 0
 
+-- Speed reference: how often does the scene main loop (func_ov004_020cead8) run on real
+-- hardware? Logged every 60 frames as "RATE". The port runs it about 0.33 times per frame.
+local scene_calls = 0
+memory.registerexec(0x020cead8, function() scene_calls = scene_calls + 1 end)
+local rate_frame = 0
+
 local keys = { "G", "G68", "G6c", "top", "bot", "top_d0", "top_c4", "top_ce", "bot_d0", "bot_c4", "bot_ce",
                "req0", "req1", "req2", "req3", "req4", "req5", "req6", "req7", "bright" }
 local last = {}
@@ -102,5 +108,15 @@ while true do
   end
   last = v
   if clip_lines < 3000 then log_clip(); clip_lines = clip_lines + 1 end
+  rate_frame = rate_frame + 1
+  if rate_frame >= 60 then
+    if scene_calls > 0 then
+      f:write(string.format("%6d  RATE scene main loop: %d calls in 60 frames (%.2f per frame)\n",
+        emu.framecount(), scene_calls, scene_calls / 60))
+      f:flush()
+    end
+    scene_calls = 0
+    rate_frame = 0
+  end
   emu.frameadvance()
 end

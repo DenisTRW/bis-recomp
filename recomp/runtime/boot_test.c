@@ -146,6 +146,10 @@ static inline void set_io16(uint32_t off, uint16_t v) { io[off] = (uint8_t)v; io
 static inline void set_io32(uint32_t off, uint32_t v) { set_io16(off, (uint16_t)v); set_io16(off + 2, v >> 16); }
 
 static uint16_t vcount;
+/* Bildzeilen-Zeitmodell (siehe line_event) */
+#define LINE_LEN ((TICK_MASK + 1) / 263)
+static int cur_line = 192;
+static uint64_t next_line_at = LINE_LEN;
 static uint16_t timer_cnt[4];
 
 static void hw_div(void) {
@@ -344,9 +348,9 @@ static uint32_t io_read_inner(uint32_t a, int size) {
     }
     uint32_t off = a & 0x1fff;
     switch (off) {
-    case 0x004: io[4] ^= 1; HLE(SIMULIERT, "DISPSTAT: VBlank-Flag wechselt bei jedem Lesen"); break;
-    case 0x006: vcount = (vcount + 1) % 263; set_io16(6, vcount);
-        HLE(SIMULIERT, "VCOUNT zaehlt pro Lesezugriff"); break;
+    case 0x004:   /* VBlank-Flag (Zeilen 192-261) und HBlank-Flag aus der Zeit; VCount-Flag setzt line_event */
+    case 0x006: vcount = (uint16_t)cur_line; set_io16(6, vcount);
+        HLE(ORIGINAL, "VCOUNT: aktuelle Bildzeile aus der verstrichenen Zeit"); break;
     case 0x100: case 0x104: case 0x108: case 0x10c:
         set_io16(off, timer_cnt[(off - 0x100) / 4] += 64);
         HLE(SIMULIERT, "Timer zaehlen pro Lesezugriff statt nach Zeit"); break;
@@ -467,8 +471,46 @@ static void io_write(uint32_t a, uint32_t v, int size) {
     platform_inhibit_irq--;
 }
 
+/* ---- Bildzeilen: ein Frame (2^22 Zugriffe) hat 263 Zeilen, Zeile 192 = Beginn VBlank.
+ * VCOUNT und DISPSTAT folgen der verstrichenen Zeit; der VCount-Interrupt kommt in der
+ * eingestellten Zeile (DISPSTAT Bit 5, Zeile = Bit 7 + Bits 8-15). Das Spiel synchronisiert
+ * sich mehrmals pro Bild auf solche Zeilen – kam er nur einmal pro Frame, brauchte jeder
+ * Spielschritt drei Frames (Ruckeln). */
+static int vcount_line(void) { return io[5] | ((io[4] >> 7) & 1) << 8; }
+static void line_event(void) {
+    next_line_at += LINE_LEN;
+    cur_line = (cur_line + 1) % 263;
+    if (cur_line == vcount_line()) {
+        io[4] |= 4;
+        if (io[4] & 0x20) { HLE(ORIGINAL, "VCount-Interrupt in der eingestellten Bildzeile"); irq_pending_extra |= 4; }
+    } else io[4] &= ~4;
+}
+static void line_reset_vblank(void) {   /* Frame-Beginn (VBlank) */
+    cur_line = 192;
+    next_line_at = mem_accesses + LINE_LEN;
+    if (vcount_line() == 192) { io[4] |= 4; if (io[4] & 0x20) irq_pending_extra |= 4; } else io[4] &= ~4;
+}
+/* Prozessor wartet (OS_Halt/Leerlauf): kommt die VCount-Zeile vor dem nächsten VBlank,
+ * vergeht die Zeit nur bis dorthin. Rückgabe 1, wenn ein VCount-Interrupt ansteht. */
+static int halt_to_vcount(void) {
+    if (!(io[4] & 0x20)) return 0;
+    int lyc = vcount_line();
+    if (lyc >= 263) return 0;
+    int d_lyc = (lyc - cur_line + 263) % 263, d_vb = (192 - cur_line + 263) % 263;
+    if (d_lyc == 0 || d_lyc >= d_vb) return 0;
+    cur_line = lyc;
+    next_line_at = mem_accesses + LINE_LEN;
+    io[4] |= 4;
+    irq_pending_extra |= 4;
+    HLE(SIMULIERT, "Warten bis zur VCount-Zeile (Zeit springt dorthin)");
+    return 1;
+}
+
+static void prof_sample(void);   /* Stichprobe: wo verbraucht das Spiel seine Zugriffe? */
 #define BUDGET() do { \
         if (++mem_accesses > mem_budget) stop("Speicherzugriffs-Budget aufgebraucht"); \
+        if (mem_accesses >= next_line_at) line_event(); \
+        if ((mem_accesses & 0xffff) == 0) prof_sample(); \
         if ((mem_accesses & TICK_MASK) == 0) tick_pending = 1; \
         if (card_countdown && !--card_countdown) card_fire(); \
     } while (0)
@@ -634,6 +676,26 @@ static uint64_t fn_entries;
 static void resched_if_pending(CPU *c);
 static uint32_t last_outside_irq;   /* zuletzt betretene Funktion außerhalb von Interrupts */
 static uint32_t ring_last(void) { return last_outside_irq; }
+
+/* Stichproben-Profil: alle 65536 Zugriffe die Funktion, in der das Spiel gerade steht
+ * (außerhalb von Interrupts; Interrupts zählen als eigene Zeile). Zeigt, wohin die
+ * Zugriffe eines Frames gehen – auch Warteschleifen ohne Funktionsaufruf. */
+#define PSAMP 128
+static struct { uint32_t addr; uint64_t n; } psamp[PSAMP];
+static uint64_t psamp_total;
+static struct { uint32_t addr; uint64_t n; } psamp_rd[PSAMP];
+static void prof_sample(void) {
+    uint32_t a = in_irq ? 1u : last_outside_irq;
+    psamp_total++;
+    if (!in_irq) {   /* zuletzt gelesene Adresse: zeigt die Speicherstelle einer Warteschleife */
+        uint32_t r = rd_ring[(rd_pos - 1) & 15];
+        for (int i = 0; i < PSAMP; i++)
+            if (psamp_rd[i].addr == r || !psamp_rd[i].addr) { psamp_rd[i].addr = r; psamp_rd[i].n++; break; }
+    }
+    for (int i = 0; i < PSAMP; i++)
+        if (psamp[i].addr == a || !psamp[i].addr) { psamp[i].addr = a; psamp[i].n++; return; }
+}
+static void prof_reset(void) { memset(psamp, 0, sizeof psamp); memset(psamp_rd, 0, sizeof psamp_rd); psamp_total = 0; }
 
 void rc_enter(CPU *c, uint32_t addr) {
     /* Antwort des ARM7 oder Geräte-Interrupt liegt bereit: am sicheren Punkt ausliefern */
@@ -812,7 +874,7 @@ void platform_idle(CPU *c) {
         card_countdown = 0;
         card_fire();
     }
-    if (!deliver_pending(c)) vblank(c);
+    if (!deliver_pending(c)) { if (halt_to_vcount()) deliver_pending(c); else vblank(c); }
     irq_force = 0;
 }
 
@@ -870,8 +932,10 @@ static void vblank(CPU *c) {
     {   /* Fehlersuche: BIS_PROFILE_FROM=frame zählt "Häufigste" erst ab diesem Frame */
         static long long prof_from = -2;
         if (prof_from == -2) prof_from = getenv("BIS_PROFILE_FROM") ? atoll(getenv("BIS_PROFILE_FROM")) : -1;
-        if (prof_from >= 0 && (long long)frames == prof_from)
+        if (prof_from >= 0 && (long long)frames == prof_from) {
             for (unsigned i = 0; i < nfns; i++) fns[i].calls = 0;
+            prof_reset();
+        }
     }
     platform_inhibit_irq++;
     gpu3d_vblank();     /* 3D: Liste des vorigen Frames zeichnen, neue übernehmen */
@@ -917,10 +981,9 @@ static void vblank(CPU *c) {
     }
     if (frame_limit && frames >= frame_limit) stop("Frame-Limit erreicht");
     io[4] |= 1;
-    /* Pro Frame: VCount-Match (Bit 2) und VBlank (Bit 0).
-     * Genauer Zeitpunkt der VCount-Zeile wird noch nicht nachgebildet. */
-    HLE(SIMULIERT, "Frame-Takt: VCount-Match + VBlank einmal pro Frame");
-    raise_irq(c, 4);
+    /* VBlank (Bit 0); der VCount-Interrupt kommt in seiner Bildzeile (line_event) */
+    HLE(SIMULIERT, "Frame-Takt: VBlank alle 2^22 Speicherzugriffe");
+    line_reset_vblank();
     raise_irq(c, 1);
 }
 
@@ -1047,7 +1110,7 @@ void rc_mcr(CPU *c, int a, int b, int d, int e, uint32_t v) {
         if (card_countdown || card_fire_pending) { card_countdown = 0; card_fire(); }
         /* Steht schon ein Interrupt an (z. B. ARM7-Antwort), weckt der den
          * Prozessor sofort; sonst vergeht ein Frame. */
-        if (!deliver_pending(c)) vblank(c);
+        if (!deliver_pending(c)) { if (halt_to_vcount()) deliver_pending(c); else vblank(c); }
         resched_if_pending(c);
         return;
     }
@@ -1115,6 +1178,28 @@ static void report(void) {
     for (unsigned i = 0; i < 16; i++) printf(" %08x", rd_ring[(rd_pos + i) & 15]);
     printf("\n");
 
+    if (psamp_total) {   /* Stichproben-Profil (Zugriffe pro Funktion) */
+        printf("Zugriffs-Profil (%llu Stichproben, je 65536 Zugriffe):\n", (unsigned long long)psamp_total);
+        for (int k = 0; k < 14; k++) {
+            int best = -1;
+            for (int i = 0; i < PSAMP; i++)
+                if (psamp[i].n && (best < 0 || psamp[i].n > psamp[best].n)) best = i;
+            if (best < 0) break;
+            printf("  %5.1f %%  %s\n", 100.0 * (double)psamp[best].n / (double)psamp_total,
+                   psamp[best].addr == 1 ? "(Interrupt-Handler)" : fn_name(psamp[best].addr));
+            psamp[best].n = 0;
+        }
+    }
+    if (psamp_total) {
+        printf("Zuletzt gelesene Adresse bei der Stichprobe:\n");
+        for (int k = 0; k < 8; k++) {
+            int best = -1;
+            for (int i = 0; i < PSAMP; i++) if (psamp_rd[i].n && (best < 0 || psamp_rd[i].n > psamp_rd[best].n)) best = i;
+            if (best < 0) break;
+            printf("  %5.1f %%  %08x\n", 100.0 * (double)psamp_rd[best].n / (double)psamp_total, psamp_rd[best].addr);
+            psamp_rd[best].n = 0;
+        }
+    }
     FnInfo **sorted = malloc(nfns * sizeof *sorted);
     unsigned used = 0;
     for (unsigned i = 0; i < nfns; i++) if (fns[i].calls) sorted[used++] = &fns[i];
